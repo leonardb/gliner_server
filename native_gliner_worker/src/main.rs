@@ -301,8 +301,9 @@ fn extract_and_remove_dollar_amounts(text: &str) -> (Vec<Value>, String) {
     // - $100, $1,234.56, $0.99
     // - 100 dollars, 1,234.56 dollars
     // - $100K, $5M (thousands/millions)
+    // - 1,000+ (amount with + suffix meaning "and above")
     let dollar_regex = Regex::new(
-        r"\$(?:\d{1,3}(?:,\d{3})*(?:\.\d{2})?|\d+(?:\.\d{2})?)\s*(?:[KMB])?|(?:\d{1,3}(?:,\d{3})*(?:\.\d{2})?|\d+(?:\.\d{2})?)\s+dollars?"
+        r"\$(?:\d{1,3}(?:,\d{3})*(?:\.\d{2})?|\d+(?:\.\d{2})?)\s*(?:[KMB])?|(?:\d{1,3}(?:,\d{3})*(?:\.\d{2})?|\d+(?:\.\d{2})?)\s+dollars?|(?:\d{1,3}(?:,\d{3})*|\d+)\+"
     ).unwrap();
     
     // Extract all dollar amounts
@@ -325,12 +326,14 @@ fn extract_and_remove_dollar_amounts(text: &str) -> (Vec<Value>, String) {
 // Helper: Extract payment rates (hourly, daily, monthly) and remove them from text
 fn extract_and_remove_rates(text: &str) -> (Vec<Value>, String) {
     // Payment rate patterns:
-    // Hourly: $25/hour, $15/hr, $20 per hour, $25k/hour, hourly rate: $50/hour
-    // Daily: $100/day, $150/d, $200 per day, $5k/day, daily rate: $100
-    // Monthly: $2000/month, $3000/mo, $1500 per month, $25k/month, monthly rate: $2000
+    // Hourly: $25/hour, $15/hr, $20 per hour, $25k/hour, 25/hr (without $)
+    // Daily: $100/day, $150/d, $200 per day, 100/day (without $)
+    // Weekly: $1000/week, $500/w, 1000/week (without $)
+    // Monthly: $2000/month, $3000/mo, $1500 per month, 2000/month (without $)
+    // Yearly: $50000/year, $45k/yr, 50000/year (without $)
     // Supports K/M/B suffixes (case-insensitive) for thousands/millions/billions
     let rate_regex = Regex::new(
-        r"(?:\$(?:\d{1,3}(?:,\d{3})*(?:\.\d{2})?|\d+(?:\.\d{2})?)|(?:\d{1,3}(?:,\d{3})*(?:\.\d{2})?|\d+(?:\.\d{2})?))\s*(?:[KMBkmb])?\s*(?:dollars?)?\s*(?:per|/)\s*(?:hour|hr|h|day|d|month|mo)|(?:hourly|daily|monthly)\s+rate\s*[:=]?\s*\$?(?:\d{1,3}(?:,\d{3})*(?:\.\d{2})?|\d+(?:\.\d{2})?)\s*(?:[KMBkmb])?"
+        r"(?:\$(?:\d{1,3}(?:,\d{3})*(?:\.\d{2})?|\d+(?:\.\d{2})?)|(?:\d{1,3}(?:,\d{3})*(?:\.\d{2})?|\d+(?:\.\d{2})?))\s*(?:[KMBkmb])?\s*(?:dollars?)?\s*(?:per|/)\s*(?:hour|hr|h|day|d|week|w|month|mo|year|yr|y|minute|min)|(?:hourly|daily|weekly|monthly|yearly)\s+rate\s*[:=]?\s*\$?(?:\d{1,3}(?:,\d{3})*(?:\.\d{2})?|\d+(?:\.\d{2})?)\s*(?:[KMBkmb])?"
     ).unwrap();
     
     // Extract all rates
