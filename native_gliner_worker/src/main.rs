@@ -353,35 +353,31 @@ fn extract_and_remove_rates(text: &str) -> (Vec<Value>, String) {
     (rates, cleaned_text)
 }
 
-// Helper: Extract prefixes (alphanumeric prefix followed by colon) and remove them from text
+// Helper: Extract first prefix (alphanumeric prefix followed by colon at start) and remove it from text
 fn extract_and_remove_prefixes(text: &str) -> (Vec<Value>, String) {
-    // Prefix pattern: Alphanumeric characters followed by a colon at start of text or after whitespace
-    // Examples: "PREFIX: some text", "ID123: description"
-    let prefix_regex = Regex::new(
-        r"^([a-zA-Z0-9]+):\s*|(?:\n|\s)([a-zA-Z0-9]+):\s+"
-    ).unwrap();
+    // Prefix pattern: Only match at the very start of text
+    // Alphanumeric characters (letters and numbers only) followed by a colon
+    // Example: "ID123: description" -> extract "ID123" only
+    let prefix_regex = Regex::new(r"^([a-zA-Z0-9]+):").unwrap();
     
-    // Extract all prefixes
-    let prefixes: Vec<Value> = prefix_regex.find_iter(text)
-        .filter_map(|mat| {
-            let full_match = mat.as_str();
-            // Extract just the prefix part (before the colon)
-            if let Some(colon_pos) = full_match.find(':') {
-                let prefix = full_match[..colon_pos].trim();
-                if !prefix.is_empty() {
-                    return Some(json!({
-                        "text": prefix,
-                        "entity_type": "prefix",
-                        "score": 0.97  // Regex matches have high confidence
-                    }));
-                }
-            }
-            None
-        })
-        .collect();
+    // Extract only the first prefix
+    let prefixes: Vec<Value> = if let Some(caps) = prefix_regex.captures(text) {
+        if let Some(prefix_match) = caps.get(1) {
+            let prefix = prefix_match.as_str();
+            vec![json!({
+                "text": prefix,
+                "entity_type": "prefix",
+                "score": 0.97  // Regex matches have high confidence
+            })]
+        } else {
+            vec![]
+        }
+    } else {
+        vec![]
+    };
     
-    // Remove all matched prefixes from text (including the colon and following space)
-    let cleaned_text = prefix_regex.replace_all(text, "").to_string();
+    // Remove only the first prefix (the colon and prefix) from text
+    let cleaned_text = prefix_regex.replace(text, "").to_string();
     
     (prefixes, cleaned_text)
 }

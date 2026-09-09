@@ -14,13 +14,13 @@
 -include_lib("common_test/include/ct.hrl").
 
 -export([all/0, suite/0, init_per_suite/1, end_per_suite/1]).
--export([single_request/1, sequential_requests/1, parallel_requests/1, response_id_matching/1, date_and_month_detection/1, financial_entity_detection/1]).
+-export([single_request/1, sequential_requests/1, parallel_requests/1, response_id_matching/1, date_and_month_detection/1, financial_entity_detection/1, prefix_detection/1, expanded_financial_formats/1]).
 
 suite() ->
     [{timetrap, {minutes, 20}}].
 
 all() ->
-    [sequential_requests, single_request, parallel_requests, response_id_matching, date_and_month_detection, financial_entity_detection].
+    [sequential_requests, single_request, parallel_requests, response_id_matching, date_and_month_detection, financial_entity_detection, prefix_detection, expanded_financial_formats].
 
 init_per_suite(Config) ->
     ct:log("Starting GLiNER test suite", []),
@@ -352,4 +352,115 @@ financial_entity_detection(_Config) ->
         Error:Reason ->
             ct:log("✗ ERROR in financial_entity_detection: ~w:~w", [Error, Reason]),
             throw({test_failed, financial_entity_detection, Error, Reason})
+    end.
+
+%% Test 7: Prefix Detection (alphanumeric prefixes followed by colon)
+prefix_detection(_Config) ->
+    ct:log("TEST 7: Prefix Detection - Verify prefix extraction", []),
+    
+    TestCases = [
+        {<<"simple_prefix">>, <<"ID123: John Doe works at Microsoft">>},
+        {<<"word_prefix">>, <<"PREFIX: some text here">>},
+        {<<"case_id">>, <<"CASE001: Sarah contacted about renewal">>},
+        {<<"letter_prefix">>, <<"REQ: Hiring for senior developer">>}
+    ],
+    
+    try
+        Results = lists:map(fun({TestId, TestText}) ->
+            {ok, Response} = gliner_server:analyze(TestText),
+            Count = maps:get(<<"count">>, Response),
+            Entities = maps:get(<<"entities">>, Response),
+            
+            ct:log("  ~s: total ~w entities", [TestId, Count]),
+            
+            % Log all entities for debugging
+            lists:foreach(fun(Entity) ->
+                Text = maps:get(<<"text">>, Entity),
+                Type = maps:get(<<"entity_type">>, Entity),
+                ct:log("    * ~s (~s)", [Text, Type])
+            end, Entities),
+            
+            % Filter for prefix entities
+            PrefixEntities = lists:filter(fun(Entity) ->
+                Type = maps:get(<<"entity_type">>, Entity),
+                Type =:= <<"prefix">>
+            end, Entities),
+            
+            PrefixCount = length(PrefixEntities),
+            ct:log("  ~s: Found ~w prefixes", [TestId, PrefixCount]),
+            
+            % Log prefix entities
+            lists:foreach(fun(Entity) ->
+                Text = maps:get(<<"text">>, Entity),
+                Score = maps:get(<<"score">>, Entity),
+                ct:log("    ✓ prefix: ~s (~.2f%)", [Text, Score * 100])
+            end, PrefixEntities),
+            
+            PrefixCount > 0
+        end, TestCases),
+        
+        case lists:all(fun(X) -> X end, Results) of
+            true -> 
+                ct:log("✓ Prefix detection test passed", []),
+                ok;
+            false -> 
+                throw({test_failed, "Some test cases did not detect prefixes"})
+        end
+    catch
+        Error:Reason ->
+            ct:log("✗ ERROR in prefix_detection: ~w:~w", [Error, Reason]),
+            throw({test_failed, prefix_detection, Error, Reason})
+    end.
+
+%% Test 8: Expanded Financial Formats (without $, amounts with +, extended time units)
+expanded_financial_formats(_Config) ->
+    ct:log("TEST 8: Expanded Financial Formats - Verify new rate and amount patterns", []),
+    
+    TestCases = [
+        {<<"rates_without_dollar">>, <<"25/hr for basic work, 50/hr for expert">>},
+        {<<"weekly_rates">>, <<"Weekly rate: 1000/week or $1200/w is typical">>},
+        {<<"yearly_rates">>, <<"Yearly rates: 50000/year or $60000/yr are negotiable">>},
+        {<<"minute_rates">>, <<"Charged at 2/min or $3/minute for short consultations">>},
+        {<<"amounts_with_plus">>, <<"Salary range is 80,000+ for junior or 150,000+ for senior">>},
+        {<<"mixed_expanded">>, <<"Rate: 30/hr, weekly 1200/w, monthly 5000/month, or annual 60000/year, salary 100,000+">>},
+        {<<"with_entities">>, <<"John from Microsoft available at 45/hr, Sarah from Google at 1500/week, or annual contract at $80000/year">>}
+    ],
+    
+    try
+        Results = lists:map(fun({TestId, TestText}) ->
+            {ok, Response} = gliner_server:analyze(TestText),
+            Count = maps:get(<<"count">>, Response),
+            Entities = maps:get(<<"entities">>, Response),
+            
+            % Filter for financial entities
+            FinancialEntities = lists:filter(fun(Entity) ->
+                Type = maps:get(<<"entity_type">>, Entity),
+                (Type =:= <<"dollar_amount">>) orelse (Type =:= <<"payment_rate">>)
+            end, Entities),
+            
+            FinancialCount = length(FinancialEntities),
+            ct:log("  ~s: ~w total entities, ~w financial", [TestId, Count, FinancialCount]),
+            
+            % Log detected financial entities
+            lists:foreach(fun(Entity) ->
+                Text = maps:get(<<"text">>, Entity),
+                Type = maps:get(<<"entity_type">>, Entity),
+                Score = maps:get(<<"score">>, Entity),
+                ct:log("    - ~s (~s) confidence: ~.2f%", [Text, Type, Score * 100])
+            end, FinancialEntities),
+            
+            FinancialCount > 0
+        end, TestCases),
+        
+        case lists:all(fun(X) -> X end, Results) of
+            true -> 
+                ct:log("✓ Expanded financial formats test passed", []),
+                ok;
+            false -> 
+                throw({test_failed, "Some test cases did not detect expanded financial formats"})
+        end
+    catch
+        Error:Reason ->
+            ct:log("✗ ERROR in expanded_financial_formats: ~w:~w", [Error, Reason]),
+            throw({test_failed, expanded_financial_formats, Error, Reason})
     end.
