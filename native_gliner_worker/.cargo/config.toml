@@ -1,38 +1,10 @@
-# Cargo configuration for ONNX Runtime linking
-# This ensures proper C++ standard library linking on all platforms
-# Handles GCC 9.x compatibility with modern ONNX Runtime binaries
-
-[build]
-# When -nodefaultlibs is used, we must provide all system libraries
-# CRITICAL: This must work with lld (LLVM linker) when built as Erlang dependency
-# 
-# The challenge: ONNX Runtime (GCC 11+ ABI) on GCC 9 system with lld linker
-# Strategy: Force lld to allow incomplete linking by using --unresolved-symbols
-rustflags = [
-    # For lld: Allow unresolved symbols - will be resolved at runtime by dynamic linker
-    # This is the lld-compatible approach for mixed ABI scenarios
-    "-C", "link-arg=-Wl,--unresolved-symbols=ignore-in-object-files",
-    "-C", "link-arg=-Wl,--no-as-needed",
-    "-C", "link-arg=-lstdc++",      # C++ standard library
-    "-C", "link-arg=-lstdc++fs",    # C++17 filesystem (if available)
-    "-C", "link-arg=-lgcc_s",       # GCC support library
-    "-C", "link-arg=-lm",           # Math library
-    "-C", "link-arg=-ldl",          # Dynamic linker
-    "-C", "link-arg=-lpthread",     # POSIX threads
-    "-C", "link-arg=-lc",           # C library
-    "-C", "link-arg=-Wl,--as-needed",
-    # Ensure runtime linker finds correct libraries
-    "-C", "link-arg=-Wl,-rpath=/usr/lib/x86_64-linux-gnu",
-    "-C", "link-arg=-Wl,-rpath=/usr/lib64",
-    "-C", "link-arg=-Wl,-rpath=/lib/x86_64-linux-gnu",
-    "-C", "link-arg=-Wl,-rpath=/lib64",
-    "-C", "link-arg=-Wl,-rpath=/usr/lib/gcc/x86_64-linux-gnu/9",
-]
+# Cargo configuration
+# GCC 11/G++ 11 is set via environment variables in rebar.config
 
 [profile.release]
 opt-level = 3
 lto = true
 codegen-units = 1
-strip = false  # Keep symbols for debugging
+strip = false
 
 
