@@ -8,6 +8,8 @@ High-performance NER (Named Entity Recognition) worker in Rust using GLiNER ONNX
   - On Ubuntu/Debian: `sudo apt install gcc-11 g++-11`
   - The build configuration automatically uses GCC 11/G++ 11 via `rebar.config`
   - Earlier versions (GCC 9, GCC 10) have incompatible C++ standard library symbols
+- **glibc 2.31 or later** (supported via weak symbol compatibility shim)
+  - ONNX Runtime requires glibc 2.32+, but we provide `__libc_single_threaded` symbol for older systems
 
 ## Quick Start
 
