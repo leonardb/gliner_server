@@ -3,19 +3,26 @@
 
 [build]
 # When -nodefaultlibs is used, we must provide all system libraries
-# Additionally, we need to help the linker find the correct C++ ABI symbols
+# IMPORTANT: Linking order matters! C++ libraries must be linked BEFORE C library
+# and WITH --no-as-needed to prevent symbol stripping
 rustflags = [
-    # Core system libraries (required with -nodefaultlibs)
-    "-C", "link-arg=-lc",           # C library
-    "-C", "link-arg=-lstdc++",      # C++ standard library  
-    "-C", "link-arg=-lgcc_s",       # GCC support library
+    # Ensure C++ ABI symbols are available
+    "-C", "link-arg=-Wl,--no-as-needed",
+    # C++ standard library MUST come first (before -lc)
+    "-C", "link-arg=-lstdc++",      # C++ standard library with ABI
+    "-C", "link-arg=-lgcc_s",       # GCC support library (C++ unwinding)
     "-C", "link-arg=-lm",           # Math library
     "-C", "link-arg=-ldl",          # Dynamic linker
     "-C", "link-arg=-lpthread",     # POSIX threads
-    # Help linker find C++ standard library paths
+    # C library comes last
+    "-C", "link-arg=-lc",           # C library
+    # Re-enable as-needed after critical libraries
     "-C", "link-arg=-Wl,--as-needed",
+    # Help linker locate C++ standard library at runtime
     "-C", "link-arg=-Wl,-rpath=/usr/lib/x86_64-linux-gnu",
     "-C", "link-arg=-Wl,-rpath=/usr/lib64",
+    "-C", "link-arg=-Wl,-rpath=/lib/x86_64-linux-gnu",
+    "-C", "link-arg=-Wl,-rpath=/lib64",
 ]
 
 [profile.release]
