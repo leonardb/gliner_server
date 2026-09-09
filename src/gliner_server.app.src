@@ -1,0 +1,15 @@
+{application, gliner_server,
+ [{description, "GLiNER Named Entity Recognition Server - Zero-shot Named Entity Recognition with Apache 2.0 License"},
+  {vsn, "1.0.0"},
+  {registered, [gliner_server_sup]},
+  {mod, {gliner_server_app, []}},
+  {applications,
+   [kernel,
+    stdlib]},
+  {env, []},
+  {modules, []},
+  {links, [
+    {<<"Repository">>, <<"https://github.com/leonardb/native_gliner_worker">>}
+  ]},
+  {maintainers, []},
+  {licenses, ["Apache-2.0"]}]}.

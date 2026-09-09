@@ -1,0 +1,64 @@
+# Build artifacts
+/target
+_build/
+rebar.lock
+rebar3.crashdump
+
+# Erlang compilation
+*.beam
+*.erl~
+erl_crash.dump
+*.crashdump
+
+# Rust build artifacts
+native_gliner_worker/target/
+native_gliner_worker/Cargo.lock
+
+# Private binaries and runtime files
+priv/bin/*
+!priv/bin/.gitkeep
+
+# Test artifacts
+_build/test/logs/
+ct_run.*/
+test_server.beam
+
+# Models (downloaded at runtime)
+model.onnx
+tokenizer.json
+
+# Development
+.cache
+*.swp
+*.swo
+*~
+*.tmp
+
+# IDE
+.vscode/
+.idea/
+*.iml
+.elp.toml
+*.swp
+*~
+
+# Editor backup files
+*.backup
+*.bak
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+
+# Compiled output
+*.o
+*.so
+*.a
+*.la
+*.dll
+*.dylib
+*.exe
