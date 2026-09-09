@@ -2,6 +2,13 @@
 
 High-performance NER (Named Entity Recognition) worker in Rust using GLiNER ONNX models with zero-shot entity extraction capabilities. Built as an Erlang/OTP application using rebar3 for reliable, supervised production deployment. Includes temporal (dates/months) and financial (dollar amounts/payment rates) entity detection via regex patterns.
 
+## Requirements
+
+- **GCC 11 or later** (for C++ ABI compatibility with ONNX Runtime)
+  - On Ubuntu/Debian: `sudo apt install gcc-11 g++-11`
+  - The build configuration automatically uses GCC 11/G++ 11 via `rebar.config`
+  - Earlier versions (GCC 9, GCC 10) have incompatible C++ standard library symbols
+
 ## Quick Start
 
 ```bash
