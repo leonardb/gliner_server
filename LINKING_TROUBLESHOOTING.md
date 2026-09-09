@@ -135,9 +135,9 @@ The `.cargo/config.toml` configuration handles all C++ linking automatically.
 
 ### Advanced Troubleshooting
 
-#### libstdc++ Version Mismatch
+#### libstdc++ Version Mismatch (Deep Dive)
 
-If you see undefined C++ symbols after dependencies are installed, there may be a version mismatch:
+If you see undefined C++ symbols after following the above steps:
 
 ```bash
 # Check what versions are available
@@ -148,34 +148,39 @@ g++ -print-file-name=libstdc++.so.6
 
 # Check the GLIBCXX version
 strings /usr/lib/x86_64-linux-gnu/libstdc++.so.6 | grep GLIBCXX | tail -1
+
+# Compare with what Rust expects
+rustc -V && rustc --print=sysroot
 ```
 
-The ONNX Runtime precompiled libraries may require a specific libstdc++ version. Ensure your system has a compatible version installed.
+**If GCC 9 is default but GLIBCXX is modern** (3.4.30+):
+- This is actually GOOD - system libstdc++ is compatible
+- The `-Wl,--allow-shlib-undefined` flag defers resolution to runtime
+- Should work with the `.cargo/config.toml` configuration
 
-#### Alternative C++ Standard Library
+**If both GCC 9 AND libstdc++ are old** (GLIBCXX 3.4.9):
+- You need newer GCC or libstdc++
+- Install: `sudo apt-get install -y libstdc++6` (updates system libstdc++)
+- Or upgrade GCC: `sudo apt-get install -y gcc-11 g++-11`
 
-If libstdc++ linking continues to fail, try linking with libc++ instead:
+#### Debugging Linker Issues
 
-Edit `.cargo/config.toml`:
-```toml
-[build]
-rustflags = [
-    "-C", "link-arg=-lc++",     # Use libc++ instead of libstdc++
-    "-C", "link-arg=-lm",
-    "-C", "link-arg=-lc",
-    "-C", "link-arg=-ldl",
-    "-C", "link-arg=-lpthread",
-]
-```
+Enable verbose output to see the exact linker command:
 
-Then rebuild:
 ```bash
-cd native_gliner_worker && cargo clean && cargo build --release
+cd native_gliner_worker
+RUSTFLAGS="-C link-arg=-v" cargo build --release 2>&1 | head -100
 ```
 
-#### Static Linking
+Look for:
+- `-fuse-ld=bfd` (should be present)
+- `-Wl,--allow-shlib-undefined` (should be present)
+- `-Wl,-rpath=/usr/lib/x86_64-linux-gnu` (should be present)
+- `-nodefaultlibs` (indicates custom library linking)
 
-For environments where shared libraries are problematic:
+#### Static Linking (For Extreme Environments)
+
+If all else fails and you have a complex environment, try static libstdc++:
 
 ```toml
 [build]
@@ -184,6 +189,8 @@ rustflags = [
     "-C", "link-arg=-static-libstdc++",
 ]
 ```
+
+**Warning**: This increases binary size significantly and may cause other issues.
 
 ## Linking Errors: Dependency Context & GCC Version Mismatches
 
@@ -243,79 +250,156 @@ rustflags = [
    - System libstdc++.so.6 has these symbols, even if GCC 9 doesn't
    - This is the proper way to handle mixed-ABI scenarios
 
-### Fix: Corrected Linking Order
+### Verification & Testing
 
-The key fix is in `.cargo/config.toml`:
+**For Parent Erlang Application (Dependency Context):**
 
-**Before (WRONG - causes linker errors):**
-```toml
-rustflags = [
-    "-C", "link-arg=-lc",           # C library FIRST ❌
-    "-C", "link-arg=-lstdc++",      # C++ library SECOND
-    "-C", "link-arg=-Wl,--as-needed",  # Can strip needed symbols
-]
-```
-
-**After (CORRECT - works in all contexts):**
-```toml
-rustflags = [
-    "-C", "link-arg=-Wl,--no-as-needed",  # Protect symbols
-    "-C", "link-arg=-lstdc++",             # C++ library FIRST ✓
-    "-C", "link-arg=-lgcc_s",
-    "-C", "link-arg=-lm",
-    "-C", "link-arg=-ldl",
-    "-C", "link-arg=-lpthread",
-    "-C", "link-arg=-lc",                  # C library LAST ✓
-    "-C", "link-arg=-Wl,--as-needed",      # Re-enable after
-    "-C", "link-arg=-Wl,-rpath=/lib/x86_64-linux-gnu",
-    "-C", "link-arg=-Wl,-rpath=/lib64",
-]
-```
-
-This configuration has been applied to your project. Rebuild your parent Erlang application:
-
+Clean and rebuild:
 ```bash
 cd /path/to/parent/erlang/app
+rebar3 clean
 rebar3 compile
 ```
 
-### If Errors Persist After Fix
+The `.cargo/config.toml` configuration handles all C++ linking and GCC version compatibility automatically.
 
-1. **Clean build artifacts:**
-   ```bash
-   cd /path/to/parent/erlang/app
-   rebar3 clean
-   rebar3 compile
-   ```
+**For Standalone Builds:**
 
-2. **Verify libstdc++ is available:**
-   ```bash
-   ldconfig -p | grep libstdc++
-   ```
+```bash
+make build        # Standalone build
+make test-suite   # Run all tests
+```
 
-3. **Check which linker is being used:**
-   Add `-v` to see the full linker command:
-   ```bash
-   cd native_gliner_worker
-   RUSTFLAGS="-C link-arg=-v" cargo build --release 2>&1 | grep "^" | head -30
-   ```
+### If Build Still Fails
 
-4. **Force GNU ld instead of lld:**
-   If lld continues to cause issues, edit `.cargo/config.toml` and add:
-   ```toml
-   "-C", "link-arg=-fuse-ld=bfd",  # Use BFD linker instead of lld
-   ```
-   Or:
-   ```toml
-   "-C", "link-arg=-fuse-ld=gold", # Use GNU gold linker
-   ```
+#### Step 1: Verify GCC Version
+
+```bash
+gcc --version
+```
+
+If GCC 9.x:
+```bash
+# Check if newer GCC is available
+update-alternatives --list gcc 2>/dev/null || echo "No alternatives configured"
+
+# Or check what's installed
+dpkg -l | grep "^ii.*gcc-" | awk '{print $2, $3}'
+```
+
+#### Step 2: Verify libstdc++ Has Modern ABI Symbols
+
+```bash
+# Check available GLIBCXX versions
+strings /usr/lib/x86_64-linux-gnu/libstdc++.so.6 | grep "^GLIBCXX_" | sort -u | tail -3
+
+# Should show GLIBCXX_3.4.30+ (not 3.4.9)
+```
+
+#### Step 3: Force Rebuild with BFD Linker
+
+Ensure the build is using GNU ld (BFD):
+
+```bash
+cd /path/to/project
+RUSTFLAGS="-C link-arg=-fuse-ld=bfd -C link-arg=-Wl,--allow-shlib-undefined" cargo build --release
+```
+
+#### Step 4: If BFD Linker Is Not Available
+
+Some systems may not have the GNU BFD linker installed. Install it:
+
+**Debian/Ubuntu:**
+```bash
+sudo apt-get install -y binutils
+```
+
+**CentOS/RHEL/Fedora:**
+```bash
+sudo yum install -y binutils
+```
+
+#### Step 5: As Last Resort - Try Gold Linker
+
+If BFD linker doesn't work, try GNU Gold linker:
+
+Edit `.cargo/config.toml` and change:
+```toml
+"-C", "link-arg=-fuse-ld=bfd",
+```
+to:
+```toml
+"-C", "link-arg=-fuse-ld=gold",
+```
+
+Then rebuild:
+```bash
+cd native_gliner_worker && cargo clean && cargo build --release
+```
+
+### Why This Fix Works
+
+1. **BFD linker (GNU ld)**: Better C++ ABI support than LLVM's lld
+2. **--allow-shlib-undefined**: Defers C++ symbol resolution to runtime (correct approach)
+3. **Library order**: C++ before C ensures proper initialization
+4. **Runtime resolution**: System libstdc++.so.6 has all symbols, even on GCC 9 systems
+5. **rpath configuration**: Ensures the binary finds libstdc++ at runtime
+
+This combination works on:
+- ✓ GCC 9.x with modern libstdc++
+- ✓ GCC 11+ (native modern ABI)
+- ✓ Standalone builds
+- ✓ Dependency context (nested builds)
 
 ## For CI/CD Pipelines and Docker
 
-### Docker Build Example
+### Using the GCC 9 Compatibility Wrapper
+
+If your CI/CD system may have GCC 9.x or unknown GCC versions, use the compatibility wrapper:
+
+**Standalone build:**
+```bash
+bash build-with-gcc9-compat.sh
+```
+
+**In CI/CD pipeline:**
+```yaml
+script:
+  - bash build-with-gcc9-compat.sh  # Auto-detects GCC and applies fixes
+  - make test-suite                  # Run tests
+```
+
+The wrapper:
+- ✓ Detects GCC version
+- ✓ Checks libstdc++ ABI compatibility
+- ✓ Applies GCC 9 workarounds if needed
+- ✓ Provides diagnostic output
+
+### Docker Build Example (GCC 9 System)
 
 ```dockerfile
-FROM rust:latest
+FROM ubuntu:20.04
+
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    pkg-config \
+    libssl-dev \
+    binutils  # Ensures GNU ld (BFD) is available
+
+WORKDIR /app
+COPY . .
+
+# Use the compatibility wrapper
+RUN bash build-with-gcc9-compat.sh
+
+# Optional: Run tests
+RUN make test-suite
+```
+
+### Docker Build Example (Modern GCC)
+
+```dockerfile
+FROM ubuntu:24.04  # Has GCC 13+
 
 RUN apt-get update && apt-get install -y \
     build-essential \
@@ -325,22 +409,40 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /app
 COPY . .
 
-# Verify dependencies before building
-RUN bash build-with-libs.sh
-
-# Build the project
+# Standard build works fine
 RUN make build
 ```
 
-### Pre-Build Check in CI
+### CI/CD Best Practices
 
-```bash
-# Verify all dependencies are installed
-bash build-with-libs.sh
+1. **Check GCC version early:**
+   ```bash
+   gcc --version
+   ```
 
-# If successful, proceed with build
-make build
-```
+2. **Install binutils if not present:**
+   ```bash
+   # Debian/Ubuntu
+   apt-get install -y binutils
+   # CentOS/RHEL
+   yum install -y binutils
+   ```
+
+3. **Use compatibility wrapper if GCC 9.x detected:**
+   ```bash
+   if gcc -dumpversion | grep -q "^9\."; then
+       bash build-with-gcc9-compat.sh
+   else
+       make build
+   fi
+   ```
+
+4. **Log system information for debugging:**
+   ```bash
+   gcc --version
+   ldd --version
+   ldconfig -p | grep libstdc++
+   ```
 
 ## References
 
