@@ -10,13 +10,11 @@
 # GCC 9 Compatibility:
 # ONNX Runtime is built with GCC 11+ (modern C++ ABI) but may run on GCC 9.
 # We use --allow-shlib-undefined to let the dynamic linker resolve symbols at runtime.
-# This works with both GNU ld and LLVM's lld linker.
+# This approach works with both GNU ld (BFD) and LLVM's lld linker.
 rustflags = [
-    # Prefer GNU ld (BFD) which handles C++ symbol resolution better
-    # If BFD is not available, falls back to default linker
-    "-C", "link-arg=-fuse-ld=bfd",
     # Allow undefined symbols to be resolved at runtime by dynamic linker
     # This is critical for GCC 9 compatibility with GCC 11+ ONNX Runtime binaries
+    # Works with both GNU ld and LLVM lld
     "-C", "link-arg=-Wl,--allow-shlib-undefined",
     "-C", "link-arg=-Wl,--no-as-needed",
     "-C", "link-arg=-lstdc++",      # C++ standard library MUST come first
