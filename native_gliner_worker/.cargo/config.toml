@@ -4,32 +4,29 @@
 
 [build]
 # When -nodefaultlibs is used, we must provide all system libraries
-# IMPORTANT: Linking order matters! C++ libraries must be linked BEFORE C library
-# and WITH --no-as-needed to prevent symbol stripping
+# CRITICAL: This must work with lld (LLVM linker) when built as Erlang dependency
 # 
-# GCC 9 Compatibility:
-# ONNX Runtime is built with GCC 11+ (modern C++ ABI) but may run on GCC 9.
-# We use --allow-shlib-undefined to let the dynamic linker resolve symbols at runtime.
-# This approach works with both GNU ld (BFD) and LLVM's lld linker.
+# The challenge: ONNX Runtime (GCC 11+ ABI) on GCC 9 system with lld linker
+# Strategy: Force lld to allow incomplete linking by using --unresolved-symbols
 rustflags = [
-    # Allow undefined symbols to be resolved at runtime by dynamic linker
-    # This is critical for GCC 9 compatibility with GCC 11+ ONNX Runtime binaries
-    # Works with both GNU ld and LLVM lld
-    "-C", "link-arg=-Wl,--allow-shlib-undefined",
+    # For lld: Allow unresolved symbols - will be resolved at runtime by dynamic linker
+    # This is the lld-compatible approach for mixed ABI scenarios
+    "-C", "link-arg=-Wl,--unresolved-symbols=ignore-in-object-files",
     "-C", "link-arg=-Wl,--no-as-needed",
-    "-C", "link-arg=-lstdc++",      # C++ standard library MUST come first
-    "-C", "link-arg=-lgcc_s",       # GCC support library (includes newer ABI shims)
+    "-C", "link-arg=-lstdc++",      # C++ standard library
+    "-C", "link-arg=-lstdc++fs",    # C++17 filesystem (if available)
+    "-C", "link-arg=-lgcc_s",       # GCC support library
     "-C", "link-arg=-lm",           # Math library
     "-C", "link-arg=-ldl",          # Dynamic linker
     "-C", "link-arg=-lpthread",     # POSIX threads
-    "-C", "link-arg=-lc",           # C library comes LAST
-    # Re-enable as-needed after critical libraries
+    "-C", "link-arg=-lc",           # C library
     "-C", "link-arg=-Wl,--as-needed",
-    # Ensure runtime linker finds correct libstdc++ with new ABI symbols
+    # Ensure runtime linker finds correct libraries
     "-C", "link-arg=-Wl,-rpath=/usr/lib/x86_64-linux-gnu",
     "-C", "link-arg=-Wl,-rpath=/usr/lib64",
     "-C", "link-arg=-Wl,-rpath=/lib/x86_64-linux-gnu",
     "-C", "link-arg=-Wl,-rpath=/lib64",
+    "-C", "link-arg=-Wl,-rpath=/usr/lib/gcc/x86_64-linux-gnu/9",
 ]
 
 [profile.release]
