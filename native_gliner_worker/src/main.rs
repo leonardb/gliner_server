@@ -350,6 +350,39 @@ fn extract_and_remove_rates(text: &str) -> (Vec<Value>, String) {
     (rates, cleaned_text)
 }
 
+// Helper: Extract prefixes (alphanumeric prefix followed by colon) and remove them from text
+fn extract_and_remove_prefixes(text: &str) -> (Vec<Value>, String) {
+    // Prefix pattern: Alphanumeric characters followed by a colon at start of text or after whitespace
+    // Examples: "PREFIX: some text", "ID123: description"
+    let prefix_regex = Regex::new(
+        r"^([a-zA-Z0-9]+):\s*|(?:\n|\s)([a-zA-Z0-9]+):\s+"
+    ).unwrap();
+    
+    // Extract all prefixes
+    let prefixes: Vec<Value> = prefix_regex.find_iter(text)
+        .filter_map(|mat| {
+            let full_match = mat.as_str();
+            // Extract just the prefix part (before the colon)
+            if let Some(colon_pos) = full_match.find(':') {
+                let prefix = full_match[..colon_pos].trim();
+                if !prefix.is_empty() {
+                    return Some(json!({
+                        "text": prefix,
+                        "entity_type": "prefix",
+                        "score": 0.97  // Regex matches have high confidence
+                    }));
+                }
+            }
+            None
+        })
+        .collect();
+    
+    // Remove all matched prefixes from text (including the colon and following space)
+    let cleaned_text = prefix_regex.replace_all(text, "").to_string();
+    
+    (prefixes, cleaned_text)
+}
+
 fn main() -> io::Result<()> {
     eprintln!("GLiNER Erlang Port starting...");
 
@@ -461,8 +494,11 @@ fn main() -> io::Result<()> {
         // Remove {{...}} segments from text
         let clean_text = remove_exclusions(&text);
         
+        // Extract prefixes and remove them from text
+        let (prefix_entities, text_without_prefixes) = extract_and_remove_prefixes(&clean_text);
+        
         // Extract emails and remove them from text
-        let (email_entities, text_without_emails) = extract_and_remove_emails(&clean_text);
+        let (email_entities, text_without_emails) = extract_and_remove_emails(&text_without_prefixes);
         
         // Extract dates and remove them from text
         let (date_entities, text_without_dates) = extract_and_remove_dates(&text_without_emails);
@@ -524,6 +560,9 @@ fn main() -> io::Result<()> {
                 })
             })
             .collect();
+        
+        // Add extracted prefix entities to the results
+        entities.extend(prefix_entities);
         
         // Add extracted email entities to the results
         entities.extend(email_entities);
