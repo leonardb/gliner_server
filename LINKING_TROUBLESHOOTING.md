@@ -220,46 +220,84 @@ If your system has **only GCC 9.x** (or defaults to GCC 9):
 - Same C++ ABI symbol errors as above
 - `gcc --version` shows: `gcc (Ubuntu 9.x.x) 9.x.x`
 - Build succeeds on systems with GCC 11+ but fails on GCC 9.x systems
+- When using lld linker (in dependency context): "undefined symbol" errors even with `--allow-shlib-undefined`
 
 **Root Cause - Critical ABI Mismatch:**
 - ONNX Runtime precompiled binaries are built with **GCC 11+** (modern C++ ABI)
 - GCC 9 uses **older C++ ABI** (GLIBCXX 3.4.9 vs 3.4.35)
 - System libstdc++.so.6 has modern ABI symbols, but GCC 9 toolchain expects old ABI
-- Linker cannot match C++ symbols between GCC 9's expectations and GCC 11+'s reality
+- When using lld linker: lld is stricter than GNU ld and needs explicit symbol deferral
 
 **Solution: Defer Symbol Resolution to Runtime Linker**
 
 This is already configured in `.cargo/config.toml`:
 ```toml
 rustflags = [
-    "-C", "link-arg=-Wl,--allow-shlib-undefined",     # ← CRITICAL: Defer to runtime linker
-    "-C", "link-arg=-Wl,--no-as-needed",              # Protect critical libraries
-    "-C", "link-arg=-lstdc++",                        # C++ library FIRST
+    "-C", "link-arg=-Wl,--unresolved-symbols=ignore-in-object-files",  # ← CRITICAL for lld
+    "-C", "link-arg=-Wl,--no-as-needed",
+    "-C", "link-arg=-lstdc++",                      # C++ library FIRST
+    "-C", "link-arg=-lstdc++fs",                    # C++17 filesystem support
     "-C", "link-arg=-lgcc_s",
     "-C", "link-arg=-lm",
     "-C", "link-arg=-ldl",
     "-C", "link-arg=-lpthread",
-    "-C", "link-arg=-lc",                             # C library LAST
-    "-C", "link-arg=-Wl,--as-needed",                 # Re-enable for unused symbols
-    # ... rpath entries ...
+    "-C", "link-arg=-lc",                           # C library LAST
+    "-C", "link-arg=-Wl,--as-needed",
+    # rpath entries with GCC 9 library path
+    "-C", "link-arg=-Wl,-rpath=/usr/lib/gcc/x86_64-linux-gnu/9",
+    # ... other rpath entries ...
 ]
 ```
 
-**How This Fixes GCC 9 Issues:**
+**How This Fixes GCC 9 Issues with lld:**
 
-The `-Wl,--allow-shlib-undefined` flag is the key:
-1. **Tells the linker**: "Some symbols might not be found during linking - that's OK"
+The `--unresolved-symbols=ignore-in-object-files` flag is lld-specific and:
+1. **Tells lld**: "Unresolved symbols in object files are OK - don't error"
 2. **Defers to dynamic linker**: At runtime, `ld.so` finds C++ ABI symbols in system libstdc++.so.6
 3. **Why it works**: System libstdc++.so.6 contains modern C++ ABI symbols (GLIBCXX_3.4.35+) even on GCC 9 systems
-4. **Proper ABI handling**: This is the correct way to handle mixed-compiler scenarios
+4. **Proper lld handling**: This is the correct way to handle ABI mismatches with lld
 
 **Why This Works in All Contexts:**
-- ✓ Works with GNU ld (BFD linker)
-- ✓ Works with LLVM's lld linker (used in dependency builds)
+- ✓ Works with GNU ld (BFD linker) - more flexible
+- ✓ Works with LLVM's lld linker (dependency context)
 - ✓ Works on GCC 9 systems (runtime resolution)
 - ✓ Works on GCC 11+ systems (native compatibility)
 - ✓ Works in standalone builds
 - ✓ Works in Erlang dependency builds (`/opt/exapi/_build/...`)
+
+### Symptom 3: glibc Version Mismatch (< 2.32)
+
+**Symptoms:**
+- Build succeeds, but binary fails at runtime with:
+  ```
+  symbol lookup error: undefined symbol: __libc_single_threaded
+  ```
+- System has glibc 2.31 or older: `ldd --version` shows "GLIBC 2.31"
+- ONNX Runtime was compiled with glibc 2.32+ (which has `__libc_single_threaded`)
+
+**Root Cause:**
+- `__libc_single_threaded` is a glibc symbol added in version 2.32
+- Older glibc versions (2.31 and earlier) don't have it
+- ONNX Runtime expects it at runtime, causing dynamic linker failure
+
+**Solution: Provide Weak Symbol Definition**
+
+This is configured in `build.rs`:
+```rust
+// Weak definition of __libc_single_threaded for glibc < 2.32 compatibility
+int __libc_single_threaded __attribute__((weak)) = 0;
+```
+
+**How This Fixes glibc Mismatch:**
+1. **During compile**: `build.rs` compiles `libc_compat.c` with weak symbol definition
+2. **During link**: The weak symbol gets linked into our binary
+3. **At runtime**: If glibc provides the symbol (glibc 2.32+), it overrides the weak version
+4. **Fallback**: If glibc doesn't have it (glibc 2.31-), our weak definition is used
+5. **Result**: Binary works on glibc 2.31+ systems
+
+**Files Modified:**
+- `native_gliner_worker/build.rs` - New file with glibc compatibility logic
+- `native_gliner_worker/Cargo.toml` - Added `cc` build dependency
 
 ### Verification & Testing
 
