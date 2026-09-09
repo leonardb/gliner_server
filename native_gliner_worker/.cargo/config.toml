@@ -2,16 +2,20 @@
 # This ensures proper C++ standard library linking on all platforms
 
 [build]
-# When -nodefaultlibs is used by the linker, we must provide all system libraries
-# This is necessary for ONNX Runtime which uses C++ and requires specific linking order
+# When -nodefaultlibs is used, we must provide all system libraries
+# Additionally, we need to help the linker find the correct C++ ABI symbols
 rustflags = [
-    # Add all necessary system libraries for when -nodefaultlibs is active
-    "-C", "link-arg=-lc",           # C library (essential)
-    "-C", "link-arg=-lstdc++",      # C++ standard library
-    "-C", "link-arg=-lgcc_s",       # GCC support library (needed for unwinding)
+    # Core system libraries (required with -nodefaultlibs)
+    "-C", "link-arg=-lc",           # C library
+    "-C", "link-arg=-lstdc++",      # C++ standard library  
+    "-C", "link-arg=-lgcc_s",       # GCC support library
     "-C", "link-arg=-lm",           # Math library
     "-C", "link-arg=-ldl",          # Dynamic linker
     "-C", "link-arg=-lpthread",     # POSIX threads
+    # Help linker find C++ standard library paths
+    "-C", "link-arg=-Wl,--as-needed",
+    "-C", "link-arg=-Wl,-rpath=/usr/lib/x86_64-linux-gnu",
+    "-C", "link-arg=-Wl,-rpath=/usr/lib64",
 ]
 
 [profile.release]
