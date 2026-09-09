@@ -2,11 +2,16 @@
 # This ensures proper C++ standard library linking on all platforms
 
 [build]
-# Explicitly link C++ standard library for ONNX Runtime compatibility
-# Uses rustc-link-lib which gets translated to proper -l flags
+# When -nodefaultlibs is used by the linker, we must provide all system libraries
+# This is necessary for ONNX Runtime which uses C++ and requires specific linking order
 rustflags = [
-    "-C", "link-arg=-lstdc++",
-    "-C", "link-arg=-lm",
+    # Add all necessary system libraries for when -nodefaultlibs is active
+    "-C", "link-arg=-lc",           # C library (essential)
+    "-C", "link-arg=-lstdc++",      # C++ standard library
+    "-C", "link-arg=-lgcc_s",       # GCC support library (needed for unwinding)
+    "-C", "link-arg=-lm",           # Math library
+    "-C", "link-arg=-ldl",          # Dynamic linker
+    "-C", "link-arg=-lpthread",     # POSIX threads
 ]
 
 [profile.release]
