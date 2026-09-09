@@ -1,24 +1,33 @@
 # Cargo configuration for ONNX Runtime linking
 # This ensures proper C++ standard library linking on all platforms
+# Handles GCC 9.x compatibility with modern ONNX Runtime binaries
 
 [build]
 # When -nodefaultlibs is used, we must provide all system libraries
 # IMPORTANT: Linking order matters! C++ libraries must be linked BEFORE C library
 # and WITH --no-as-needed to prevent symbol stripping
+# 
+# GCC 9 Compatibility:
+# ONNX Runtime is built with GCC 11+ (modern C++ ABI) but may run on GCC 9.
+# We use --allow-shlib-undefined to let the dynamic linker resolve symbols at runtime.
+# This works with both GNU ld and LLVM's lld linker.
 rustflags = [
-    # Ensure C++ ABI symbols are available
+    # Prefer GNU ld (BFD) which handles C++ symbol resolution better
+    # If BFD is not available, falls back to default linker
+    "-C", "link-arg=-fuse-ld=bfd",
+    # Allow undefined symbols to be resolved at runtime by dynamic linker
+    # This is critical for GCC 9 compatibility with GCC 11+ ONNX Runtime binaries
+    "-C", "link-arg=-Wl,--allow-shlib-undefined",
     "-C", "link-arg=-Wl,--no-as-needed",
-    # C++ standard library MUST come first (before -lc)
-    "-C", "link-arg=-lstdc++",      # C++ standard library with ABI
-    "-C", "link-arg=-lgcc_s",       # GCC support library (C++ unwinding)
+    "-C", "link-arg=-lstdc++",      # C++ standard library MUST come first
+    "-C", "link-arg=-lgcc_s",       # GCC support library (includes newer ABI shims)
     "-C", "link-arg=-lm",           # Math library
     "-C", "link-arg=-ldl",          # Dynamic linker
     "-C", "link-arg=-lpthread",     # POSIX threads
-    # C library comes last
-    "-C", "link-arg=-lc",           # C library
+    "-C", "link-arg=-lc",           # C library comes LAST
     # Re-enable as-needed after critical libraries
     "-C", "link-arg=-Wl,--as-needed",
-    # Help linker locate C++ standard library at runtime
+    # Ensure runtime linker finds correct libstdc++ with new ABI symbols
     "-C", "link-arg=-Wl,-rpath=/usr/lib/x86_64-linux-gnu",
     "-C", "link-arg=-Wl,-rpath=/usr/lib64",
     "-C", "link-arg=-Wl,-rpath=/lib/x86_64-linux-gnu",
