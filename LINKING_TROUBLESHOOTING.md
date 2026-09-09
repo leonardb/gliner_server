@@ -227,28 +227,39 @@ If your system has **only GCC 9.x** (or defaults to GCC 9):
 - System libstdc++.so.6 has modern ABI symbols, but GCC 9 toolchain expects old ABI
 - Linker cannot match C++ symbols between GCC 9's expectations and GCC 11+'s reality
 
-**Solution: Use GNU ld with Runtime Symbol Resolution**
+**Solution: Defer Symbol Resolution to Runtime Linker**
 
 This is already configured in `.cargo/config.toml`:
 ```toml
 rustflags = [
-    "-C", "link-arg=-fuse-ld=bfd",                    # Use GNU ld instead of lld
-    "-C", "link-arg=-Wl,--allow-shlib-undefined",     # Let runtime linker resolve symbols
+    "-C", "link-arg=-Wl,--allow-shlib-undefined",     # ← CRITICAL: Defer to runtime linker
     "-C", "link-arg=-Wl,--no-as-needed",              # Protect critical libraries
     "-C", "link-arg=-lstdc++",                        # C++ library FIRST
-    # ... other libraries ...
+    "-C", "link-arg=-lgcc_s",
+    "-C", "link-arg=-lm",
+    "-C", "link-arg=-ldl",
+    "-C", "link-arg=-lpthread",
     "-C", "link-arg=-lc",                             # C library LAST
+    "-C", "link-arg=-Wl,--as-needed",                 # Re-enable for unused symbols
+    # ... rpath entries ...
 ]
 ```
 
 **How This Fixes GCC 9 Issues:**
-1. `-fuse-ld=bfd`: Switches from LLVM's lld to GNU's BFD linker
-   - BFD linker understands C++ symbol versioning better
-   - More compatible with older GCC toolchains
-2. `--allow-shlib-undefined`: Defers symbol resolution to runtime
-   - Lets the dynamic linker find C++ ABI symbols at runtime
-   - System libstdc++.so.6 has these symbols, even if GCC 9 doesn't
-   - This is the proper way to handle mixed-ABI scenarios
+
+The `-Wl,--allow-shlib-undefined` flag is the key:
+1. **Tells the linker**: "Some symbols might not be found during linking - that's OK"
+2. **Defers to dynamic linker**: At runtime, `ld.so` finds C++ ABI symbols in system libstdc++.so.6
+3. **Why it works**: System libstdc++.so.6 contains modern C++ ABI symbols (GLIBCXX_3.4.35+) even on GCC 9 systems
+4. **Proper ABI handling**: This is the correct way to handle mixed-compiler scenarios
+
+**Why This Works in All Contexts:**
+- ✓ Works with GNU ld (BFD linker)
+- ✓ Works with LLVM's lld linker (used in dependency builds)
+- ✓ Works on GCC 9 systems (runtime resolution)
+- ✓ Works on GCC 11+ systems (native compatibility)
+- ✓ Works in standalone builds
+- ✓ Works in Erlang dependency builds (`/opt/exapi/_build/...`)
 
 ### Verification & Testing
 
@@ -296,60 +307,45 @@ strings /usr/lib/x86_64-linux-gnu/libstdc++.so.6 | grep "^GLIBCXX_" | sort -u | 
 # Should show GLIBCXX_3.4.30+ (not 3.4.9)
 ```
 
-#### Step 3: Force Rebuild with BFD Linker
+#### Step 3: Force Rebuild with Proper Linker Flags
 
-Ensure the build is using GNU ld (BFD):
+The key flag is `-Wl,--allow-shlib-undefined`, which works with any linker:
 
 ```bash
 cd /path/to/project
-RUSTFLAGS="-C link-arg=-fuse-ld=bfd -C link-arg=-Wl,--allow-shlib-undefined" cargo build --release
+RUSTFLAGS="-C link-arg=-Wl,--allow-shlib-undefined" cargo build --release
 ```
 
-#### Step 4: If BFD Linker Is Not Available
+This flag tells the linker to defer undefined C++ symbol resolution to the runtime dynamic linker (ld.so), which is the correct approach for mixed-ABI scenarios.
 
-Some systems may not have the GNU BFD linker installed. Install it:
-
-**Debian/Ubuntu:**
-```bash
-sudo apt-get install -y binutils
-```
-
-**CentOS/RHEL/Fedora:**
-```bash
-sudo yum install -y binutils
-```
-
-#### Step 5: As Last Resort - Try Gold Linker
-
-If BFD linker doesn't work, try GNU Gold linker:
-
-Edit `.cargo/config.toml` and change:
-```toml
-"-C", "link-arg=-fuse-ld=bfd",
-```
-to:
-```toml
-"-C", "link-arg=-fuse-ld=gold",
-```
-
-Then rebuild:
-```bash
-cd native_gliner_worker && cargo clean && cargo build --release
-```
+#### Step 4: If Build Still Fails After Flag Application
 
 ### Why This Fix Works
 
-1. **BFD linker (GNU ld)**: Better C++ ABI support than LLVM's lld
-2. **--allow-shlib-undefined**: Defers C++ symbol resolution to runtime (correct approach)
-3. **Library order**: C++ before C ensures proper initialization
-4. **Runtime resolution**: System libstdc++.so.6 has all symbols, even on GCC 9 systems
-5. **rpath configuration**: Ensures the binary finds libstdc++ at runtime
+1. **`--allow-shlib-undefined` flag**: The critical fix
+   - Tells linker: "Some symbols will be resolved at runtime"
+   - Dynamic linker (ld.so) finds C++ ABI symbols in system libstdc++.so.6
+   - Works with ANY linker (GNU ld, LLVM lld, gold, etc.)
+   - This is the proper way to handle ABI mismatches
 
-This combination works on:
-- ✓ GCC 9.x with modern libstdc++
+2. **Library linking order**: C++ before C
+   - Ensures C++ runtime initialization happens first
+   - Proper symbol dependency resolution
+
+3. **`-Wl,--no-as-needed` around critical libs**: Prevents symbol stripping
+   - Keeps C++ ABI initialization symbols even if marked unused
+   
+4. **rpath configuration**: Ensures runtime libstdc++ discovery
+   - Multiple paths checked: `/usr/lib/x86_64-linux-gnu`, `/usr/lib64`, `/lib/x86_64-linux-gnu`, `/lib64`
+   - Works across different Linux distributions
+
+**This approach works on:**
+- ✓ GCC 9.x with modern libstdc++ (ABI mismatch scenario)
 - ✓ GCC 11+ (native modern ABI)
 - ✓ Standalone builds
-- ✓ Dependency context (nested builds)
+- ✓ **Dependency context** (nested Erlang app builds with lld)
+- ✓ Both GNU ld and LLVM lld linkers
+- ✓ Docker/CI environments with mixed GCC versions
 
 ## For CI/CD Pipelines and Docker
 
