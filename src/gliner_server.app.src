@@ -5,8 +5,12 @@
   {mod, {gliner_server_app, []}},
   {applications,
    [kernel,
-    stdlib]},
-  {env, []},
+    stdlib,
+    inets,
+    ssl,
+    crypto,
+    poolboy]},
+  {env, [{gliner_pool_size, 3}]},
   {modules, []},
   {links, [
     {<<"Repository">>, <<"https://github.com/leonardb/native_gliner_worker">>}

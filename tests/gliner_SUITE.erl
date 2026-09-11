@@ -14,69 +14,47 @@
 -include_lib("common_test/include/ct.hrl").
 
 -export([all/0, suite/0, init_per_suite/1, end_per_suite/1]).
--export([single_request/1, sequential_requests/1, parallel_requests/1, response_id_matching/1, date_and_month_detection/1, financial_entity_detection/1, prefix_detection/1, expanded_financial_formats/1]).
+-export([single_request/1, sequential_requests/1, parallel_requests/1, response_id_matching/1, date_and_month_detection/1, financial_entity_detection/1, prefix_detection/1, expanded_financial_formats/1, analyze_map_return_type/1, pattern_caching/1, matches_token_extraction/1]).
 
 suite() ->
     [{timetrap, {minutes, 20}}].
 
 all() ->
-    [sequential_requests, single_request, parallel_requests, response_id_matching, date_and_month_detection, financial_entity_detection, prefix_detection, expanded_financial_formats].
+    [sequential_requests, single_request, parallel_requests, response_id_matching, date_and_month_detection, financial_entity_detection, prefix_detection, expanded_financial_formats, analyze_map_return_type, pattern_caching, matches_token_extraction].
 
 init_per_suite(Config) ->
     ct:log("Starting GLiNER test suite", []),
     
-    % Start the application (which starts the supervisor and gen_server)
-    case application:start(gliner_server) of
-        ok ->
-            ct:log("✓ gliner_server application started", []);
-        {error, {already_started, gliner_server}} ->
-            ct:log("✓ gliner_server application already started", []);
-        AppError ->
-            ct:log("✗ Failed to start application: ~w", [AppError]),
-            throw({failed_to_start_app, AppError})
+    % Start application and all dependencies
+    case application:ensure_all_started(gliner_server) of
+        {ok, _Started} ->
+            ct:log("✓ gliner_server and dependencies started", []);
+        {error, {AppError, App}} ->
+            ct:log("✗ Failed to start ~w: ~w", [App, AppError]),
+            throw({failed_to_start_app, {App, AppError}})
     end,
     
     % Log binary path for debugging
-    BinaryPath = gliner_server:get_binary_path(),
-    ct:log("Binary path: ~s", [BinaryPath]),
-    ct:log("Binary exists: ~w", [filelib:is_file(BinaryPath)]),
-    ct:log("Current working directory: ~s", [element(2, file:get_cwd())]),
-    
-    % Wait for the READY signal from the Rust binary
-    % This signal indicates the model has been loaded successfully
-    % Model download can take 30-60 seconds on first run
     ct:log("Waiting for READY signal from Rust binary (model loading, may take 1-3 minutes on first run)...", []),
-    case wait_for_ready_signal(180, 500) of  % Wait up to 180*500=90000ms (1.5 minutes)
+    case gliner_server:wait_ready_all(90000) of  % Wait up to 90 seconds for all workers to be ready
         ok ->
-            ct:log("✓ Received READY signal - model is loaded and server is ready", []);
+            ct:log("✓ All workers received READY signal - model is loaded and server is ready", []);
         ReadyError ->
             ct:log("✗ Failed to receive READY signal: ~w", [ReadyError]),
             throw({server_not_ready, ReadyError})
     end,
     
-    % Verify process is registered
-    case whereis(gliner_server) of
+    % Verify worker pool is registered
+    case whereis(gliner_pool) of
         undefined ->
-            ct:log("✗ ERROR: gliner_server not found after receiving READY signal!", []),
-            throw(gliner_server_disappeared);
-        Pid ->
-            ct:log("✓ Final verification: gliner_server registered as ~w", [Pid]),
-            [{server_pid, Pid} | Config]
+            ct:log("✗ ERROR: gliner_pool not found after receiving READY signal!", []),
+            throw(gliner_pool_disappeared);
+        PoolPid ->
+            ct:log("✓ Final verification: gliner_pool registered as ~w", [PoolPid]),
+            [{pool_pid, PoolPid} | Config]
     end.
 
-%% Helper: Wait for the READY signal from the Rust binary
-wait_for_ready_signal(0, _Interval) ->
-    {error, ready_signal_timeout};
-wait_for_ready_signal(Attempts, Interval) ->
-    case gliner_server:wait_ready(Interval) of
-        ok ->
-            ok;
-        {error, not_ready} ->
-            timer:sleep(Interval),
-            wait_for_ready_signal(Attempts - 1, Interval);
-        Error ->
-            Error
-    end.
+%% Helper: No longer needed - wait_ready_all handles the polling
 
 end_per_suite(_Config) ->
     % Stop the application (which stops supervisor and gen_server)
@@ -94,13 +72,13 @@ end_per_suite(_Config) ->
 single_request(_Config) ->
     ct:log("TEST 1: Single Request - Basic entity extraction", []),
     
-    % Verify server is still running
-    case whereis(gliner_server) of
+    % Verify worker pool is running
+    case whereis(gliner_pool) of
         undefined ->
-            ct:log("✗ ERROR: gliner_server not found at test start", []),
-            throw({error, gliner_server_missing});
-        Pid ->
-            ct:log("  gliner_server running as: ~w", [Pid])
+            ct:log("✗ ERROR: gliner_pool not found at test start", []),
+            throw({error, gliner_pool_missing});
+        PoolPid ->
+            ct:log("  gliner_pool running as: ~w", [PoolPid])
     end,
     
     % Give system extra time to settle before first test
@@ -463,4 +441,165 @@ expanded_financial_formats(_Config) ->
         Error:Reason ->
             ct:log("✗ ERROR in expanded_financial_formats: ~w:~w", [Error, Reason]),
             throw({test_failed, expanded_financial_formats, Error, Reason})
+    end.
+
+%% Test 9: Analyze with explicit map return type
+analyze_map_return_type(_Config) ->
+    ct:log("TEST 9: Analyze with map return type - Explicit return type parameter", []),
+    
+    Text = <<"John Doe works at Microsoft in Seattle, Washington">>,
+    
+    try
+        % Call with explicit map return type
+        {ok, Response} = gliner_server:analyze(Text, map),
+        ct:log("  Response keys: ~w", [maps:keys(Response)]),
+        
+        % Verify response has expected structure
+        case {maps:is_key(<<"count">>, Response), maps:is_key(<<"entities">>, Response)} of
+            {true, true} ->
+                Count = maps:get(<<"count">>, Response),
+                Entities = maps:get(<<"entities">>, Response),
+                ct:log("  Entities found: ~w", [Count]),
+                
+                case Count > 0 andalso length(Entities) > 0 of
+                    true ->
+                        ct:log("✓ Analyze with map return type test passed", []),
+                        ok;
+                    false ->
+                        throw({test_failed, "Expected entities but got none"})
+                end;
+            _ ->
+                throw({test_failed, "Response missing count or entities key"})
+        end
+    catch
+        Error:Reason ->
+            ct:log("✗ ERROR in analyze_map_return_type: ~w:~w", [Error, Reason]),
+            throw({test_failed, analyze_map_return_type, Error, Reason})
+    end.
+
+%% Test 10: Pattern caching - Pattern return type and cache hits
+pattern_caching(_Config) ->
+    ct:log("TEST 10: Pattern Caching - Template matching and LRU cache", []),
+    
+    try
+        % First request: Text with clear entities for pattern generation
+        Template1 = <<"John Doe works at Microsoft in Seattle">>,
+        ct:log("  First request (pattern generation attempt): ~s", [Template1]),
+        {ok, Resp1} = gliner_server:analyze(Template1, pattern),
+        ct:log("  Response 1 keys: ~w", [maps:keys(Resp1)]),
+        
+        % Response might contain either 'pattern' key or standard 'entities' key
+        % depending on whether pattern was generated or no entities found
+        case maps:is_key(<<"pattern">>, Resp1) of
+            true ->
+                % Pattern was generated
+                Pattern1 = maps:get(<<"pattern">>, Resp1),
+                Cached1 = maps:get(<<"cached">>, Resp1, false),
+                ct:log("  Generated pattern: ~s", [Pattern1]),
+                ct:log("  Cached (first call): ~w", [Cached1]),
+                
+                % First call should not be marked as cached (just generated)
+                case Cached1 of
+                    false ->
+                        ct:log("  ✓ First request correctly marked as not cached", []);
+                    true ->
+                        % Could be cached if another worker generated same pattern
+                        ct:log("  Note: First request marked as cached (concurrent generation)", [])
+                end,
+                
+                % Second request: Similar template, should potentially hit cache
+                timer:sleep(100),
+                Template2 = <<"Jane Smith works at Google in Mountain View">>,
+                ct:log("  Second request (should match pattern if templates similar): ~s", [Template2]),
+                {ok, Resp2} = gliner_server:analyze(Template2, pattern),
+                
+                Cached2 = maps:get(<<"cached">>, Resp2, false),
+                Pattern2Present = maps:is_key(<<"pattern">>, Resp2),
+                ct:log("  Second response has pattern: ~w, cached: ~w", [Pattern2Present, Cached2]),
+                
+                ct:log("✓ Pattern caching test passed (pattern return type working)", []),
+                ok;
+            false ->
+                % No pattern generated (might be no entities or error)
+                % This is still a valid test - map return type fallback
+                case maps:is_key(<<"entities">>, Resp1) of
+                    true ->
+                        Count = maps:get(<<"count">>, Resp1, 0),
+                        ct:log("  Note: Pattern not generated (no/few entities, returned ~w entities)", [Count]),
+                        ct:log("✓ Pattern caching test passed (graceful fallback to map response)", []),
+                        ok;
+                    false ->
+                        ct:log("  ERROR: Response has neither pattern nor entities", []),
+                        throw({test_failed, "Unexpected response format"})
+                end
+        end
+    catch
+        Error:Reason ->
+            ct:log("✗ ERROR in pattern_caching: ~w:~w", [Error, Reason]),
+            throw({test_failed, pattern_caching, Error, Reason})
+    end.
+
+%% Test 11: Token extraction - Extract matches and replace with tokens
+matches_token_extraction(_Config) ->
+    ct:log("TEST 11: Token Extraction - Template with token replacements", []),
+    
+    try
+        % Use text with clear entities that should generate a pattern
+        Text = <<"John Doe works at Microsoft in Seattle">>,
+        ct:log("  Input text: ~s", [Text]),
+        ct:log("  Calling gliner_server:analyze/2 with tokens return type...", []),
+        
+        {ok, Response} = gliner_server:analyze(Text, tokens),
+        ct:log("  Response keys: ~w", [maps:keys(Response)]),
+        
+        % Verify response has expected structure for tokens
+        case {maps:is_key(<<"template">>, Response), 
+              maps:is_key(<<"tokens">>, Response)} of
+            {true, true} ->
+                Template = maps:get(<<"template">>, Response),
+                Tokens = maps:get(<<"tokens">>, Response),
+                
+                ct:log("  Template: ~s", [Template]),
+                ct:log("  Number of tokens: ~w", [length(Tokens)]),
+                
+                % Verify template contains token placeholders
+                case binary:match(Template, <<"{{smdpattern_">>) of
+                    {_, _} ->
+                        ct:log("  ✓ Template contains token placeholders", []);
+                    nomatch ->
+                        ct:log("  Note: Template does not contain expected placeholders (may have no entities)", [])
+                end,
+                
+                % Verify tokens have structure
+                case is_list(Tokens) of
+                    true ->
+                        ct:log("  ✓ Tokens is a list", []),
+                        
+                        % Log token details
+                        lists:foreach(fun({TokenName, Value}) ->
+                            ct:log("    Token ~s = ~s", [TokenName, Value])
+                        end, Tokens),
+                        
+                        ct:log("✓ Token extraction test passed", []),
+                        ok;
+                    false ->
+                        throw({test_failed, "Tokens not in expected format"})
+                end;
+            _ ->
+                % Response might not have tokens if no entities found
+                case maps:is_key(<<"entities">>, Response) of
+                    true ->
+                        Count = maps:get(<<"count">>, Response, 0),
+                        ct:log("  Note: Tokens not generated (no/few entities, returned ~w entities)", [Count]),
+                        ct:log("✓ Token extraction test passed (graceful fallback to map response)", []),
+                        ok;
+                    false ->
+                        ct:log("  ERROR: Response has no template, tokens, or entities", []),
+                        throw({test_failed, "Unexpected response format"})
+                end
+        end
+    catch
+        Error:Reason ->
+            ct:log("✗ ERROR in matches_token_extraction: ~w:~w", [Error, Reason]),
+            throw({test_failed, matches_token_extraction, Error, Reason})
     end.

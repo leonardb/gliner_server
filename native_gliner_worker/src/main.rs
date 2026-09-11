@@ -12,7 +12,7 @@
 
 use std::io::{self, Read, Write};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use serde_json::{json, Value};
 use regex::Regex;
 
@@ -22,12 +22,8 @@ use gliner::model::params::Parameters;
 use gliner::model::input::text::TextInput;
 use orp::params::RuntimeParameters;
 
-// Download URLs for model and tokenizer from HuggingFace
-// Using the standard resolve endpoint with download parameter
-const TOKENIZER_URL: &str = "https://huggingface.co/onnx-community/gliner_small-v2.1/raw/main/tokenizer.json";
-const MODEL_URL: &str = "https://huggingface.co/onnx-community/gliner_small-v2.1/resolve/main/onnx/model.onnx";
-
 // Helper: Get stable cache directory for model files
+// Files should be pre-downloaded by gliner_manager in Erlang
 fn get_model_cache_dir() -> io::Result<PathBuf> {
     // Try to use XDG_CACHE_HOME on Linux/macOS, or $HOME/.cache
     if let Ok(cache_home) = std::env::var("XDG_CACHE_HOME") {
@@ -54,137 +50,6 @@ fn get_model_cache_dir() -> io::Result<PathBuf> {
     let cache_dir = PathBuf::from("/tmp/gliner_worker");
     fs::create_dir_all(&cache_dir)?;
     Ok(cache_dir)
-}
-
-// Helper: Download model files if missing, store in stable cache directory
-fn ensure_model_files() -> io::Result<(PathBuf, PathBuf)> {
-    // Use stable cache directory instead of current working directory
-    let model_dir = get_model_cache_dir()?;
-
-    let tokenizer_path = model_dir.join("tokenizer.json");
-    let model_path = model_dir.join("model.onnx");
-
-    // Download tokenizer if not present
-    if !tokenizer_path.exists() {
-        eprintln!("Downloading tokenizer.json to {}...", tokenizer_path.display());
-        match download_file(TOKENIZER_URL, &tokenizer_path) {
-            Ok(_) => eprintln!("✓ Tokenizer downloaded successfully"),
-            Err(e) => {
-                eprintln!("✗ Failed to download tokenizer: {}", e);
-                return Err(e);
-            }
-        }
-    } else {
-        eprintln!("✓ Using cached tokenizer: {}", tokenizer_path.display());
-    }
-
-    // Download model if not present
-    if !model_path.exists() {
-        eprintln!("Downloading model.onnx to {} (this may take several minutes)...", model_path.display());
-        match download_file(MODEL_URL, &model_path) {
-            Ok(_) => eprintln!("✓ Model downloaded successfully"),
-            Err(e) => {
-                eprintln!("✗ Failed to download model: {}", e);
-                return Err(e);
-            }
-        }
-    } else {
-        eprintln!("✓ Using cached model: {}", model_path.display());
-    }
-
-    Ok((tokenizer_path, model_path))
-}
-
-// Helper: Download a file from URL and save to disk
-fn download_file(url: &str, dest_path: &Path) -> io::Result<()> {
-    eprintln!("Fetching: {}", url);
-    
-    let client = reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(300)) // 5 minute timeout per file
-        .redirect(reqwest::redirect::Policy::limited(10)) // Follow up to 10 redirects
-        .build()
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Client creation failed: {}", e)))?;
-    
-    let mut response = client.get(url)
-        .send()
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("HTTP request failed: {}", e)))?;
-
-    if !response.status().is_success() {
-        return Err(io::Error::new(
-            io::ErrorKind::Other,
-            format!("HTTP error {}: {} - {}", response.status(), url, response.status().canonical_reason().unwrap_or("Unknown error"))
-        ));
-    }
-
-    // Get total size for progress tracking
-    let total_size = response.content_length().unwrap_or(0);
-    
-    if total_size > 0 {
-        eprintln!("File size: {:.1} MB", total_size as f64 / 1_000_000.0);
-    } else {
-        eprintln!("Warning: Could not determine file size, download may take a while...");
-    }
-    
-    // Create temporary file to write to
-    let temp_path = dest_path.with_extension("tmp");
-    let mut file = fs::File::create(&temp_path)?;
-
-    // Download with progress reporting
-    let mut downloaded = 0u64;
-    let mut buffer = [0u8; 65536]; // Larger buffer for better performance
-    let start_time = std::time::Instant::now();
-    let mut last_progress_time = start_time;
-    
-    loop {
-        match response.read(&mut buffer) {
-            Ok(0) => break, // EOF
-            Ok(n) => {
-                file.write_all(&buffer[..n])?;
-                downloaded += n as u64;
-                
-                let now = std::time::Instant::now();
-                // Update progress every 0.5 seconds to avoid excessive output
-                if now.duration_since(last_progress_time).as_millis() > 500 || downloaded == total_size {
-                    last_progress_time = now;
-                    
-                    if total_size > 0 {
-                        let percent = (downloaded * 100) / total_size;
-                        let elapsed = start_time.elapsed().as_secs_f64();
-                        let speed = if elapsed > 0.1 { (downloaded as f64 / elapsed) / 1_000_000.0 } else { 0.0 };
-                        let remaining = if speed > 0.1 { (total_size - downloaded) as f64 / speed / 1_000_000.0 } else { 0.0 };
-                        
-                        eprint!("\r[{}%] {:.1}/{:.1} MB | {:.1} MB/s | ETA: {:.0}s      ", 
-                                percent,
-                                downloaded as f64 / 1_000_000.0,
-                                total_size as f64 / 1_000_000.0,
-                                speed,
-                                remaining);
-                    } else {
-                        let elapsed = start_time.elapsed().as_secs_f64();
-                        let speed = if elapsed > 0.1 { (downloaded as f64 / elapsed) / 1_000_000.0 } else { 0.0 };
-                        eprint!("\r{:.1} MB downloaded | {:.1} MB/s      ", 
-                                downloaded as f64 / 1_000_000.0,
-                                speed);
-                    }
-                    let _ = io::stderr().flush();
-                }
-            }
-            Err(e) => {
-                let _ = fs::remove_file(&temp_path);
-                return Err(io::Error::new(io::ErrorKind::Other, 
-                    format!("Download interrupted: {}", e)));
-            }
-        }
-    }
-    eprintln!(); // newline after progress
-    
-    file.sync_all()?;
-    drop(file);
-
-    // Move temp file to final location
-    fs::rename(&temp_path, dest_path)?;
-    
-    Ok(())
 }
 
 // Helper: Remove {{...}} segments from text
@@ -385,19 +250,26 @@ fn extract_and_remove_prefixes(text: &str) -> (Vec<Value>, String) {
 fn main() -> io::Result<()> {
     eprintln!("GLiNER Erlang Port starting...");
 
-    // Extract embedded model and tokenizer to cache on first run
-    let (tokenizer_path, model_path) = match ensure_model_files() {
-        Ok(paths) => {
-            eprintln!("✓ Model files ready");
-            paths
-        }
-        Err(e) => {
-            eprintln!("✗ Failed to prepare model files: {}", e);
-            eprintln!("Continuing anyway, will fail on first request if models are missing");
-            // Return error - the port will close but Erlang supervisor will restart it
-            return Err(e);
-        }
-    };
+    // Get the model cache directory (files should be pre-downloaded by Erlang manager)
+    let model_dir = get_model_cache_dir()?;
+    let tokenizer_path = model_dir.join("tokenizer.json");
+    let model_path = model_dir.join("model.onnx");
+
+    // Verify files exist
+    if !tokenizer_path.exists() {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("Tokenizer file not found at: {}", tokenizer_path.display())
+        ));
+    }
+    if !model_path.exists() {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("Model file not found at: {}", model_path.display())
+        ));
+    }
+
+    eprintln!("✓ Model files ready");
 
     // Initialize model (loaded once at startup)
     eprintln!("Loading GLiNER model...");
