@@ -58,7 +58,6 @@ generate_pattern(Text, Entities) ->
 %% Validates that captures look reasonable (don't contain excessive text)
 -spec try_match_pattern(binary(), pattern_entry()) -> {ok, binary()} | no_match.
 try_match_pattern(Text, {CompiledPattern, PatternString}) ->
-    io:format("Trying to match text: ~s Pattern: ~s~n", [Text, PatternString]),
     case re:run(Text, CompiledPattern, [{capture, all_but_first, binary}]) of
         {match, Captures} ->
             % Match successful, now validate that captures are reasonable
