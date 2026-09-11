@@ -53,6 +53,7 @@ generate_pattern(Text, Entities) ->
 %% The PatternString can be reused for other texts with same structure
 -spec try_match_pattern(binary(), pattern_entry()) -> {ok, binary()} | no_match.
 try_match_pattern(Text, {CompiledPattern, PatternString}) ->
+    io:format("Trying to match text: ~s Pattern: ~s~n", [Text, PatternString]),
     case re:run(Text, CompiledPattern) of
         {match, _Captures} ->
             % Match successful, return the pattern string for reuse
