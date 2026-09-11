@@ -14,13 +14,13 @@
 -include_lib("common_test/include/ct.hrl").
 
 -export([all/0, suite/0, init_per_suite/1, end_per_suite/1]).
--export([single_request/1, sequential_requests/1, parallel_requests/1, response_id_matching/1, date_and_month_detection/1, financial_entity_detection/1, prefix_detection/1, expanded_financial_formats/1, analyze_map_return_type/1, pattern_caching/1, matches_token_extraction/1]).
+-export([single_request/1, sequential_requests/1, parallel_requests/1, response_id_matching/1, date_and_month_detection/1, financial_entity_detection/1, prefix_detection/1, expanded_financial_formats/1, analyze_map_return_type/1, pattern_caching/1, matches_token_extraction/1, pattern_validation_extended_text/1]).
 
 suite() ->
     [{timetrap, {minutes, 20}}].
 
 all() ->
-    [sequential_requests, single_request, parallel_requests, response_id_matching, date_and_month_detection, financial_entity_detection, prefix_detection, expanded_financial_formats, analyze_map_return_type, pattern_caching, matches_token_extraction].
+    [sequential_requests, single_request, parallel_requests, response_id_matching, date_and_month_detection, financial_entity_detection, prefix_detection, expanded_financial_formats, analyze_map_return_type, pattern_caching, matches_token_extraction, pattern_validation_extended_text].
 
 init_per_suite(Config) ->
     ct:log("Starting GLiNER test suite", []),
@@ -602,4 +602,45 @@ matches_token_extraction(_Config) ->
         Error:Reason ->
             ct:log("✗ ERROR in matches_token_extraction: ~w:~w", [Error, Reason]),
             throw({test_failed, matches_token_extraction, Error, Reason})
+    end.
+
+%% Test 12: Pattern validation - reject matches with extended text
+pattern_validation_extended_text(_Config) ->
+    ct:log("TEST 12: Pattern Validation - Extended Text Rejection", []),
+    
+    try
+        % First call with exact text to establish pattern
+        Text1 = <<"John Doe works at Microsoft in Seattle">>,
+        ct:log("  Call 1: ~s", [Text1]),
+        {ok, Response1} = gliner_server:analyze(Text1, tokens),
+        Cached1 = maps:get(<<"cached">>, Response1),
+        ct:log("  Cached: ~w", [Cached1]),
+        
+        % Second call with extended text that contains {{ pattern markers
+        Text2 = <<"John Doe works at Microsoft in Seattle. Click {{smd_target}} to continue">>,
+        ct:log("  Call 2: ~s", [Text2]),
+        {ok, Response2} = gliner_server:analyze(Text2, tokens),
+        Cached2 = maps:get(<<"cached">>, Response2),
+        ct:log("  Cached: ~w", [Cached2]),
+        
+        % Verify the second call does NOT use cache (should be false since pattern doesn't match)
+        case Cached2 of
+            false ->
+                ct:log("✓ Extended text correctly rejected pattern match", []),
+                ok;
+            true ->
+                % Check if the tokens contain suspicious patterns
+                Tokens2 = maps:get(<<"tokens">>, Response2),
+                case lists:any(fun({_Name, Value}) -> binary:match(Value, <<"{{">>) =/= nomatch end, Tokens2) of
+                    true ->
+                        throw({test_failed, "Extended text incorrectly matched pattern with suspicious content"});
+                    false ->
+                        ct:log("✓ Extended text cached but with valid tokens (no markup)", []),
+                        ok
+                end
+        end
+    catch
+        Error:Reason ->
+            ct:log("✗ ERROR in pattern_validation_extended_text: ~w:~w", [Error, Reason]),
+            throw({test_failed, pattern_validation_extended_text, Error, Reason})
     end.

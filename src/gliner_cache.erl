@@ -19,18 +19,22 @@
 %% Input: Template text, GLiNER response entities
 %% Output: {ok, {CompiledPattern, PatternString}} or {error, term()}
 %% The pattern string is what gets returned on cache hits
-%% Since all entities become (.*?) capture groups, we don't need to track positions
+%% Uses non-greedy (.*?) capture groups to prevent over-matching
 -spec generate_pattern(binary(), list()) -> {ok, pattern_entry()} | {error, term()}.
 generate_pattern(Text, Entities) ->
     try
         % Extract unique entity texts
         UniqueTexts = lists:usort([maps:get(<<"text">>, E) || E <- Entities]),
         
-        % Replace each unique entity text with (.*) capture group
-        % Start with original text, replace entities one by one
+        % Sort by length (longest first) to prevent partial replacements
+        % Example: if we have ["New York", "New York City"], replace "New York City" first
+        SortedByLength = lists:sort(fun(A, B) -> byte_size(B) =< byte_size(A) end, UniqueTexts),
+        
+        % Replace each unique entity text with (.*?) non-greedy capture group
+        % Start with original text, replace entities one by one (longest first)
         PatternStr = lists:foldl(fun(EntityText, Acc) ->
-            binary:replace(Acc, EntityText, <<"(.*)">>, [global])
-        end, Text, UniqueTexts),
+            binary:replace(Acc, EntityText, <<"(.*?)">>, [global])
+        end, Text, SortedByLength),
         
         % Anchor pattern at both ends
         AnchoredPattern = <<"^", PatternStr/binary, "$">>,
@@ -51,18 +55,42 @@ generate_pattern(Text, Entities) ->
 %% Try to match text against a cached pattern
 %% Returns {ok, PatternString} if match, or no_match
 %% The PatternString can be reused for other texts with same structure
+%% Validates that captures look reasonable (don't contain excessive text)
 -spec try_match_pattern(binary(), pattern_entry()) -> {ok, binary()} | no_match.
 try_match_pattern(Text, {CompiledPattern, PatternString}) ->
     io:format("Trying to match text: ~s Pattern: ~s~n", [Text, PatternString]),
-    case re:run(Text, CompiledPattern) of
-        {match, _Captures} ->
-            % Match successful, return the pattern string for reuse
-            {ok, PatternString};
+    case re:run(Text, CompiledPattern, [{capture, all_but_first, binary}]) of
+        {match, Captures} ->
+            % Match successful, now validate that captures are reasonable
+            % Reject if any capture contains newlines or excessive punctuation
+            case validate_captures(Captures) of
+                true ->
+                    {ok, PatternString};
+                false ->
+                    no_match
+            end;
         nomatch ->
             no_match;
         {error, _Reason} ->
             no_match
     end.
+
+%% Validate that captured text looks like entity text (no newlines, no excessive text)
+%% Rejects captures containing markup patterns like {{, newlines, or URLs
+-spec validate_captures(list(binary())) -> boolean().
+validate_captures(Captures) ->
+    lists:all(fun validate_capture/1, Captures).
+
+%% Check a single capture - reject if it contains suspicious patterns
+-spec validate_capture(binary()) -> boolean().
+validate_capture(Capture) ->
+    % Reject if contains template/markup patterns
+    not (binary:match(Capture, <<"{{">>) =/= nomatch orelse
+         binary:match(Capture, <<"}}">>) =/= nomatch orelse
+         binary:match(Capture, <<"http">>) =/= nomatch orelse
+         binary:match(Capture, <<"\n">>) =/= nomatch orelse
+         % Reject if contains sentence endings or multiple periods
+         (length(binary:split(Capture, <<".">>)) - 1) > 1).
 
 %% Add pattern to cache, maintaining max size
 %% Returns {UpdatedCache, NewCacheSize}
