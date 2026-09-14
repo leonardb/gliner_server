@@ -17,7 +17,11 @@
     <<"They">> => ok,
     <<"they">> => ok,
     <<"Them">> => ok,
-    <<"them">> => ok
+    <<"them">> => ok,
+    <<"Claims">> => ok,
+    <<"claims">> => ok,
+    <<"Jobs">> => ok,
+    <<"jobs">> => ok
 }).
 
 -record(state, {
