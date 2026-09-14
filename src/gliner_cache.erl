@@ -20,6 +20,7 @@
 %% Output: {ok, {CompiledPattern, PatternString}} or {error, term()}
 %% The pattern string is what gets returned on cache hits
 %% Uses non-greedy (.*?) capture groups to prevent over-matching
+%% Escapes literal text sections for proper regex interpretation
 -spec generate_pattern(binary(), list()) -> {ok, pattern_entry()} | {error, term()}.
 generate_pattern(Text, Entities) ->
     try
@@ -30,13 +31,24 @@ generate_pattern(Text, Entities) ->
         % Example: if we have ["New York", "New York City"], replace "New York City" first
         SortedByLength = lists:sort(fun(A, B) -> byte_size(B) =< byte_size(A) end, UniqueTexts),
         
-        % Replace each unique entity text with (.*?) non-greedy capture group
-        % Start with original text, replace entities one by one (longest first)
-        PatternStr = lists:foldl(fun(EntityText, Acc) ->
-            binary:replace(Acc, EntityText, <<"(.*?)">>, [global])
-        end, Text, SortedByLength),
+        % Step 1: Replace each entity with a placeholder to preserve literal text
+        % Use numbered placeholders: <<<ENTITY_0>>>, <<<ENTITY_1>>>, etc.
+        {TextWithPlaceholders, _} = lists:foldl(fun(EntityText, {Acc, Index}) ->
+            Placeholder = <<"<<<ENTITY_", (integer_to_binary(Index))/binary, ">>>">>,
+            NewAcc = binary:replace(Acc, EntityText, Placeholder, [global]),
+            {NewAcc, Index + 1}
+        end, {Text, 0}, SortedByLength),
         
-        % Anchor pattern at both ends
+        % Step 2: Escape the entire text for regex special characters
+        EscapedText = escape_regex_special_chars(TextWithPlaceholders),
+        
+        % Step 3: Replace each placeholder with the non-greedy capture group (.*?)
+        PatternStr = lists:foldl(fun({EntityText, Index}, Acc) ->
+            Placeholder = <<"<<<ENTITY_", (integer_to_binary(Index))/binary, ">>>">>,
+            binary:replace(Acc, Placeholder, <<"(.*?)">>, [global])
+        end, EscapedText, lists:zip(SortedByLength, lists:seq(0, length(SortedByLength) - 1))),
+        
+        % Step 4: Anchor pattern at both ends
         AnchoredPattern = <<"^", PatternStr/binary, "$">>,
         
         % Compile pattern
@@ -51,6 +63,18 @@ generate_pattern(Text, Entities) ->
         error:CatchReason ->
             {error, CatchReason}
     end.
+
+%% Escape regex special characters in text
+%% Special chars: . * + ? [ ] ( ) { } ^ $ | \
+%% IMPORTANT: Escape \ first, then other chars, to avoid double-escaping
+-spec escape_regex_special_chars(binary()) -> binary().
+escape_regex_special_chars(Text) ->
+    % Escape backslash first to avoid double-escaping other chars
+    Step1 = binary:replace(Text, <<"\\">>, <<"\\\\">>, [global]),
+    % Then escape all other special characters
+    lists:foldl(fun(Char, Acc) ->
+        binary:replace(Acc, <<Char>>, <<"\\", Char>>, [global])
+    end, Step1, [$.,$*, $+, $?, $[, $], $(, $), ${, $}, $^, $$, $|]).
 
 %% Try to match text against a cached pattern
 %% Returns {ok, PatternString} if match, or no_match
