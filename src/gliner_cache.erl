@@ -74,7 +74,7 @@ escape_regex_special_chars(Text) ->
     % Then escape all other special characters
     lists:foldl(fun(Char, Acc) ->
         binary:replace(Acc, <<Char>>, <<"\\", Char>>, [global])
-    end, Step1, [$.,$*, $+, $?, $[, $], $(, $), ${, $}, $^, $$, $|]).
+    end, Step1, [$., $*, $+, $?, $[, $], $(, $), ${, $}, $^, $$, $|]).
 
 %% Try to match text against a cached pattern
 %% Returns {ok, PatternString} if match, or no_match

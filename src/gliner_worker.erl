@@ -459,6 +459,8 @@ extract_matches_and_build_template(Text, CompiledPattern, _PatternString) ->
 -spec build_tokens_with_index(list(), non_neg_integer(), list()) -> list().
 build_tokens_with_index([], _Index, Acc) ->
     lists:reverse(Acc);
+build_tokens_with_index([<<>> | Rest], Index, Acc) ->
+    build_tokens_with_index(Rest, Index, Acc);
 build_tokens_with_index([Value | Rest], Index, Acc) when is_map_key(Value, ?EXCLUDE_PATTERNS) ->
     build_tokens_with_index(Rest, Index, Acc);
 build_tokens_with_index([Value | Rest], Index, Acc) ->
