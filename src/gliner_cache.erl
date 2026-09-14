@@ -9,17 +9,6 @@
 
 -include_lib("kernel/include/logger.hrl").
 
--define(EXCLUDE_PATTERNS, #{
-    <<"We">> => ok,
-    <<"we">> => ok,
-    <<"You">> => ok,
-    <<"you">> => ok,
-    <<"They">> => ok,
-    <<"they">> => ok,
-    <<"Them">> => ok,
-    <<"them">> => ok
-}).
-
 -type pattern_entry() :: {re:mp(), binary()}.  % {CompiledPattern, PatternString}
 
 %%====================================================================
@@ -95,8 +84,7 @@ validate_captures(Captures) ->
 -spec validate_capture(binary()) -> boolean().
 validate_capture(Capture) ->
     % Reject if contains template/markup patterns
-    not (is_map_key(Capture, ?EXCLUDE_PATTERNS) orelse
-         binary:match(Capture, <<"{{">>) =/= nomatch orelse
+    not (binary:match(Capture, <<"{{">>) =/= nomatch orelse
          binary:match(Capture, <<"}}">>) =/= nomatch orelse
          binary:match(Capture, <<"http">>) =/= nomatch orelse
          binary:match(Capture, <<"\n">>) =/= nomatch orelse

@@ -9,6 +9,17 @@
 
 -include_lib("kernel/include/logger.hrl").
 
+-define(EXCLUDE_PATTERNS, #{
+    <<"We">> => ok,
+    <<"we">> => ok,
+    <<"You">> => ok,
+    <<"you">> => ok,
+    <<"They">> => ok,
+    <<"they">> => ok,
+    <<"Them">> => ok,
+    <<"them">> => ok
+}).
+
 -record(state, {
     worker_id :: pos_integer(),
     model_dir :: string(),
@@ -423,7 +434,7 @@ extract_matches_and_build_template(Text, CompiledPattern, _PatternString) ->
     case re:run(Text, CompiledPattern, [{capture, all_but_first, binary}]) of
         {match, Captures} ->
             % Build list of {TokenName, MatchValue} pairs with indices
-            TokensAndMatches = build_tokens_with_index(Captures, 0, []),
+            TokensAndMatches = build_tokens_with_index(Captures, 1, []),
             
             % Build template by replacing captures with token placeholders
             TemplateWithTokens = lists:foldl(fun({TokenName, MatchValue}, Acc) ->
@@ -448,6 +459,8 @@ extract_matches_and_build_template(Text, CompiledPattern, _PatternString) ->
 -spec build_tokens_with_index(list(), non_neg_integer(), list()) -> list().
 build_tokens_with_index([], _Index, Acc) ->
     lists:reverse(Acc);
+build_tokens_with_index([Value | Rest], Index, Acc) when is_map_key(Value, ?EXCLUDE_PATTERNS) ->
+    build_tokens_with_index(Rest, Index, Acc);
 build_tokens_with_index([Value | Rest], Index, Acc) ->
     TokenName = iolist_to_binary(io_lib:format(<<"smdpattern_~w">>, [Index])),
     build_tokens_with_index(Rest, Index + 1, [{TokenName, Value} | Acc]).
