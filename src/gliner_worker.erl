@@ -464,5 +464,5 @@ build_tokens_with_index([<<>> | Rest], Index, Acc) ->
 build_tokens_with_index([Value | Rest], Index, Acc) when is_map_key(Value, ?EXCLUDE_PATTERNS) ->
     build_tokens_with_index(Rest, Index, Acc);
 build_tokens_with_index([Value | Rest], Index, Acc) ->
-    TokenName = iolist_to_binary(io_lib:format(<<"smdpattern_~w">>, [Index])),
+    TokenName = <<"smdpattern_", (integer_to_binary(Index))/binary>>,
     build_tokens_with_index(Rest, Index + 1, [{TokenName, Value} | Acc]).
