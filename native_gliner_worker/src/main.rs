@@ -346,6 +346,9 @@ fn main() -> io::Result<()> {
         "phone number",
         "email",
         "address",
+        "location",
+        "zip",
+        "zip code",
         "credit card number",
         "social security number",
         "passport number",
@@ -356,7 +359,7 @@ fn main() -> io::Result<()> {
         "health insurance id number",
         "national id number",
         "ip address",
-        "iban",
+        "iban"
     ];
 
     eprintln!("GLiNER Erlang Port ready and listening...");
