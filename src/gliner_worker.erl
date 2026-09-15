@@ -2,7 +2,8 @@
 -behaviour(gen_server).
 
 %% API
--export([start_link/1]).
+-export([start_link/1,
+         clear_cache/0]).
 
 %% gen_server callbacks
 -export([init/1, handle_continue/2, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
@@ -40,6 +41,9 @@
 %%====================================================================
 %% API
 %%====================================================================
+
+clear_cache() ->
+    [gen_server:cast(P, clear_cache) || {_, P, _, _} <- supervisor:which_children(gliner_worker_sup)].
 
 -doc """
 Start a GLiNER worker process
@@ -161,6 +165,9 @@ handle_call({wait_ready}, _From, State = #state{ready = Ready}) ->
 handle_call(_Request, _From, State) ->
     {reply, {error, unknown_request}, State}.
 
+handle_cast(clear_cache, State = #state{}) ->
+    ?LOG_INFO("Worker ~w: Clearing pattern cache", [State#state.worker_id]),
+    {noreply, State#state{pattern_cache = []}};
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
