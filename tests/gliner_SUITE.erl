@@ -14,13 +14,13 @@
 -include_lib("common_test/include/ct.hrl").
 
 -export([all/0, suite/0, init_per_suite/1, end_per_suite/1]).
--export([single_request/1, sequential_requests/1, parallel_requests/1, response_id_matching/1, date_and_month_detection/1, financial_entity_detection/1, prefix_detection/1, expanded_financial_formats/1, analyze_map_return_type/1, pattern_caching/1, matches_token_extraction/1, pattern_validation_extended_text/1]).
+-export([single_request/1, sequential_requests/1, parallel_requests/1, response_id_matching/1, date_and_month_detection/1, financial_entity_detection/1, prefix_detection/1, expanded_financial_formats/1, analyze_map_return_type/1, pattern_caching/1, matches_token_extraction/1, pattern_validation_extended_text/1, state_codes_detection/1]).
 
 suite() ->
     [{timetrap, {minutes, 20}}].
 
 all() ->
-    [sequential_requests, single_request, parallel_requests, response_id_matching, date_and_month_detection, financial_entity_detection, prefix_detection, expanded_financial_formats, analyze_map_return_type, pattern_caching, matches_token_extraction, pattern_validation_extended_text].
+    [sequential_requests, single_request, parallel_requests, response_id_matching, date_and_month_detection, financial_entity_detection, prefix_detection, expanded_financial_formats, analyze_map_return_type, pattern_caching, matches_token_extraction, pattern_validation_extended_text, state_codes_detection].
 
 init_per_suite(Config) ->
     ct:log("Starting GLiNER test suite", []),
@@ -643,4 +643,62 @@ pattern_validation_extended_text(_Config) ->
         Error:Reason ->
             ct:log("✗ ERROR in pattern_validation_extended_text: ~w:~w", [Error, Reason]),
             throw({test_failed, pattern_validation_extended_text, Error, Reason})
+    end.
+
+%% Test 13: State codes detection - Extract US state abbreviations
+state_codes_detection(_Config) ->
+    ct:log("TEST 13: State Codes Detection - US State Abbreviations", []),
+    
+    try
+        % Test various state code contexts
+        % Note: GLiNER model may also detect full state names like "Arizona" as states
+        TestCases = [
+            {<<"I live in Arizona">>, 1},  % GLiNER detects "Arizona" as state
+            {<<"I live in AZ">>, 1},       % AZ extracted as state code by Rust
+            {<<"I live in AZ.">>, 1},      % AZ before period
+            {<<"I live in AZ, near Phoenix">>, 1},  % AZ before comma
+            {<<"Sunny in FL! Come visit">>, 1},    % FL before exclamation
+            {<<"Is it in NY? Yes it is">>, 1},     % NY before question mark
+            {<<"Here in CA: the best state">>, 1}, % CA before colon
+            {<<"Born in TX, raised in FL, live in CA">>, 3},  % Multiple state codes
+            {<<"AZAZ">>, 0},  % No spacing, shouldn't match as state codes
+            {<<"AZ Arizona AZ">>, 3}  % Two AZ codes + Arizona as state
+        ],
+        
+        lists:foreach(fun({Text, ExpectedCount}) ->
+            {ok, Response} = gliner_server:analyze(Text, map),
+            Entities = maps:get(<<"entities">>, Response),
+            ct:log("  Input: ~s", [Text]),
+            ct:log("    All entities: ~w", [Entities]),
+            
+            StateEntities = lists:filter(fun(E) ->
+                maps:get(<<"entity_type">>, E) =:= <<"state">>
+            end, Entities),
+            ActualCount = length(StateEntities),
+            
+            ct:log("    Location state entities: ~w", [StateEntities]),
+            ct:log("    Expected: ~w, Actual: ~w", [ExpectedCount, ActualCount]),
+            
+            case ActualCount =:= ExpectedCount of
+                true ->
+                    ct:log("  ✓ Text: ~s => Found ~w state codes (expected ~w)", 
+                           [Text, ActualCount, ExpectedCount]),
+                    lists:foreach(fun(Entity) ->
+                        StateCode = maps:get(<<"text">>, Entity),
+                        Score = maps:get(<<"score">>, Entity),
+                        ct:log("    - State: ~s (score: ~w)", [StateCode, Score])
+                    end, StateEntities);
+                false ->
+                    ct:log("  ✗ Text: ~s => Found ~w state codes (expected ~w)", 
+                           [Text, ActualCount, ExpectedCount]),
+                    throw({test_failed, "State code count mismatch"})
+            end
+        end, TestCases),
+        
+        ct:log("✓ State codes detection test passed", []),
+        ok
+    catch
+        Error:Reason ->
+            ct:log("✗ ERROR in state_codes_detection: ~w:~w", [Error, Reason]),
+            throw({test_failed, state_codes_detection, Error, Reason})
     end.

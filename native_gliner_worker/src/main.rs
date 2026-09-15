@@ -247,6 +247,62 @@ fn extract_and_remove_prefixes(text: &str) -> (Vec<Value>, String) {
     (prefixes, cleaned_text)
 }
 
+// Helper: Extract US state codes and remove them from text
+// Matches valid US state abbreviations (AL, AK, AZ, ..., WY) with boundary conditions
+// Patterns: " AL " (surrounded by spaces), " AL." (followed by punctuation), etc.
+fn extract_and_remove_state_codes(text: &str) -> (Vec<Value>, String) {
+    // All valid US state abbreviations
+    let states = [
+        "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA",
+        "HI", "ID", "IL", "IN", "IA", "KS", "KY", "LA", "ME", "MD",
+        "MA", "MI", "MN", "MS", "MO", "MT", "NE", "NV", "NH", "NJ",
+        "NM", "NY", "NC", "ND", "OH", "OK", "OR", "PA", "RI", "SC",
+        "SD", "TN", "TX", "UT", "VT", "VA", "WA", "WV", "WI", "WY",
+    ];
+    
+    // Build regex: match state codes with word boundaries or punctuation
+    // Pattern: (?:^|\s)(AL|AK|...|WY)(?=[\s.,!:?]|$)
+    // This matches state codes that are either:
+    // - Preceded by start of string or whitespace
+    // - Followed by space, period, comma, exclamation, colon, question, or end of string
+    let states_pattern = states.join("|");
+    let pattern = format!(r"(?:^|\s)({})(?=[\s.,!:?]|$)", states_pattern);
+    let state_regex = Regex::new(&pattern).unwrap();
+    
+    // Extract all state codes
+    let state_entities: Vec<Value> = state_regex.captures_iter(text)
+        .map(|caps| {
+            let state_code = caps.get(1).unwrap().as_str();
+            json!({
+                "text": state_code,
+                "entity_type": "location_state",
+                "score": 0.98  // Regex matches on known list have very high confidence
+            })
+        })
+        .collect();
+    
+    // Remove all matched state codes from text (keep surrounding spaces)
+    // Replace space-STATE with space to avoid double spaces
+    let mut cleaned_text = text.to_string();
+    
+    for caps in state_regex.captures_iter(text) {
+        // Get the full match (including leading space if present)
+        if let Some(full_match) = caps.get(0) {
+            let match_str = full_match.as_str();
+            // Replace with single space to avoid double spaces
+            cleaned_text = cleaned_text.replacen(match_str, " ", 1);
+        }
+    }
+    
+    // Clean up multiple consecutive spaces
+    let cleaned_text = Regex::new(r" +").unwrap()
+        .replace_all(&cleaned_text, " ")
+        .trim()
+        .to_string();
+    
+    (state_entities, cleaned_text)
+}
+
 fn main() -> io::Result<()> {
     eprintln!("GLiNER Erlang Port starting...");
 
@@ -371,8 +427,11 @@ fn main() -> io::Result<()> {
         // Extract emails and remove them from text
         let (email_entities, text_without_emails) = extract_and_remove_emails(&text_without_prefixes);
         
+        // Extract US state codes and remove them from text
+        let (state_entities, text_without_states) = extract_and_remove_state_codes(&text_without_emails);
+        
         // Extract dates and remove them from text
-        let (date_entities, text_without_dates) = extract_and_remove_dates(&text_without_emails);
+        let (date_entities, text_without_dates) = extract_and_remove_dates(&text_without_states);
         
         // Extract months and remove them from text
         let (month_entities, text_without_temporal) = extract_and_remove_months(&text_without_dates);
@@ -437,6 +496,9 @@ fn main() -> io::Result<()> {
         
         // Add extracted email entities to the results
         entities.extend(email_entities);
+        
+        // Add extracted state code entities to the results
+        entities.extend(state_entities);
         
         // Add extracted date entities to the results
         entities.extend(date_entities);
