@@ -651,9 +651,10 @@ state_codes_detection(_Config) ->
     
     try
         % Test various state code contexts
-        % Note: GLiNER model may also detect full state names like "Arizona" as states
+        % Note: Regex extracts only 2-letter state codes (AL, AK, AZ, etc.)
+        % Full state names like "Arizona" are detected by GLiNER model as "state" entity type, not "state_code"
         TestCases = [
-            {<<"I live in Arizona">>, 1},  % GLiNER detects "Arizona" as state
+            {<<"I live in Arizona">>, 0},  % Full state name - not extracted by our state code regex
             {<<"I live in AZ">>, 1},       % AZ extracted as state code by Rust
             {<<"I live in AZ.">>, 1},      % AZ before period
             {<<"I live in AZ, near Phoenix">>, 1},  % AZ before comma
@@ -661,8 +662,8 @@ state_codes_detection(_Config) ->
             {<<"Is it in NY? Yes it is">>, 1},     % NY before question mark
             {<<"Here in CA: the best state">>, 1}, % CA before colon
             {<<"Born in TX, raised in FL, live in CA">>, 3},  % Multiple state codes
-            {<<"AZAZ">>, 0},  % No spacing, shouldn't match as state codes
-            {<<"AZ Arizona AZ">>, 3}  % Two AZ codes + Arizona as state
+            {<<"AZAZ">>, 0},  % No spacing, shouldn't match as state codes (word boundary on both sides)
+            {<<"AZ Arizona AZ">>, 2}  % Two AZ codes extracted (Arizona is not a state code)
         ],
         
         lists:foreach(fun({Text, ExpectedCount}) ->
@@ -672,7 +673,7 @@ state_codes_detection(_Config) ->
             ct:log("    All entities: ~w", [Entities]),
             
             StateEntities = lists:filter(fun(E) ->
-                maps:get(<<"entity_type">>, E) =:= <<"state">>
+                maps:get(<<"entity_type">>, E) =:= <<"state_code">>
             end, Entities),
             ActualCount = length(StateEntities),
             
@@ -691,7 +692,7 @@ state_codes_detection(_Config) ->
                 false ->
                     ct:log("  ✗ Text: ~s => Found ~w state codes (expected ~w)", 
                            [Text, ActualCount, ExpectedCount]),
-                    throw({test_failed, "State code count mismatch"})
+                    throw({test_failed, "State code count mismatch: Expected " ++ integer_to_list(ExpectedCount) ++ ", got " ++ integer_to_list(ActualCount) ++ " Text: " ++ binary_to_list(Text)})
             end
         end, TestCases),
         

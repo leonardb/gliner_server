@@ -264,7 +264,7 @@ fn extract_and_remove_state_codes(text: &str) -> (Vec<Value>, String) {
             let state_code = caps.get(1).unwrap().as_str();
             json!({
                 "text": state_code,
-                "entity_type": "state",
+                "entity_type": "state_code",
                 "score": 0.98  // Regex matches on known list have very high confidence
             })
         })
