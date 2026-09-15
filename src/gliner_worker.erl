@@ -502,7 +502,9 @@ do_replace([Part | Rest], Token, <<>> = Value, Limit, Acc) ->
 do_replace([Part0 | Rest], Token, Value, stop, Acc) ->
     do_replace(Rest, Token, Value, stop, <<Acc/binary, Part0/binary>>);
 do_replace([Part0 | Rest], Token, Value, all, Acc) ->
-    Part = binary:replace(Part0, Value, Token, [global]),
+    MatchValue = gliner_cache:escape_regex_special_chars(Value),
+    Pattern = <<"(?:^|\\s)(", MatchValue/binary, ")(?=\\s|$|[.,!:?;])">>,
+    Part = re:replace(Part0, Pattern, Token, [{return, binary}, global]),
     do_replace(Rest, Token, Value, all, <<Acc/binary, Part/binary>>);
 do_replace([Part0 | Rest], Token, Value, first, Acc) ->
     case binary:match(Part0, Value) of

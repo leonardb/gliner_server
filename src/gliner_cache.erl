@@ -4,7 +4,8 @@
 -export([
     generate_pattern/2,
     try_match_pattern/2,
-    add_to_cache/4
+    add_to_cache/4,
+    escape_regex_special_chars/1
 ]).
 
 -include_lib("kernel/include/logger.hrl").
