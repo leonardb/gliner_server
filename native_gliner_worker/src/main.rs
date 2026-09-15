@@ -338,15 +338,25 @@ fn main() -> io::Result<()> {
     };
 
     // Pre-allocate labels (email removed - extracted via regex)
+    // Labels for gliner_multi_pii-v1 model (PII detection)
+    // This model is optimized for detecting personally identifiable information
     let labels = vec![
         "person",
-        "location",
-        "city",
-        "state",
-        "country",
-        "zip code",
-        "address",
         "organization",
+        "phone number",
+        "email",
+        "address",
+        "credit card number",
+        "social security number",
+        "passport number",
+        "driver's license number",
+        "date of birth",
+        "username",
+        "bank account number",
+        "health insurance id number",
+        "national id number",
+        "ip address",
+        "iban",
     ];
 
     eprintln!("GLiNER Erlang Port ready and listening...");

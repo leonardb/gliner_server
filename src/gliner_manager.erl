@@ -15,8 +15,8 @@
 }).
 
 %% URLs for model and tokenizer from HuggingFace
--define(TOKENIZER_URL, "https://huggingface.co/onnx-community/gliner_small-v2.1/raw/main/tokenizer.json").
--define(MODEL_URL, "https://huggingface.co/onnx-community/gliner_small-v2.1/resolve/main/onnx/model.onnx").
+-define(TOKENIZER_URL, "https://huggingface.co/onnx-community/gliner_multi_pii-v1/resolve/main/tokenizer.json").
+-define(MODEL_URL, "https://huggingface.co/onnx-community/gliner_multi_pii-v1/resolve/main/onnx/model.onnx").
 
 %%====================================================================
 %% API
@@ -148,8 +148,15 @@ ensure_model_files(ModelDir) ->
     ok.
 
 %% Download a file from URL and save to disk using httpc
+%% Handles HTTP redirects for Git LFS files
 -spec download_file(string(), string()) -> ok | {error, term()}.
 download_file(Url, DestPath) ->
+    download_file_with_redirects(Url, DestPath, 0, 10).  % Max 10 redirects
+
+-spec download_file_with_redirects(string(), string(), non_neg_integer(), pos_integer()) -> ok | {error, term()}.
+download_file_with_redirects(_Url, _DestPath, Redirects, MaxRedirects) when Redirects >= MaxRedirects ->
+    {error, {too_many_redirects, MaxRedirects}};
+download_file_with_redirects(Url, DestPath, Redirects, MaxRedirects) ->
     TempPath = DestPath ++ ".tmp",
     
     % Ensure inets is started for httpc
@@ -174,11 +181,21 @@ download_file(Url, DestPath) ->
     HttpOptions = [
         {timeout, 300000},          % 5 minute timeout
         {connect_timeout, 10000},   % 10 second connect timeout
-        {ssl, [{verify, verify_none}]}  % Allow self-signed certs (HuggingFace should be fine)
+        {ssl, [{verify, verify_none}]}  % Allow self-signed certs
     ],
     
     % Make the HTTP request
     case httpc:request(get, {Url, [{"User-Agent", "GLiNER-Erlang/1.0"}]}, HttpOptions, [{body_format, binary}]) of
+        {ok, {{_HttpVersion, StatusCode, _Reason}, Headers, _Body}} when StatusCode >= 300, StatusCode < 400 ->
+            % Redirect - follow it
+            case find_location_header(Headers) of
+                {ok, NewUrl} ->
+                    ?LOG_INFO("Following redirect from ~s to ~s", [Url, NewUrl]),
+                    download_file_with_redirects(NewUrl, DestPath, Redirects + 1, MaxRedirects);
+                error ->
+                    ?LOG_ERROR("Got redirect status ~w but no Location header", [StatusCode]),
+                    {error, {redirect_no_location, StatusCode}}
+            end;
         {ok, {{_HttpVersion, StatusCode, _Reason}, _Headers, Body}} when StatusCode >= 200, StatusCode < 300 ->
             % Success - write to temp file then rename
             case file:write_file(TempPath, Body) of
@@ -203,4 +220,17 @@ download_file(Url, DestPath) ->
         {error, HttpError} ->
             ?LOG_ERROR("HTTP request failed: ~w", [HttpError]),
             {error, {http_request_failed, HttpError}}
+    end.
+
+%% Find Location header in HTTP headers
+-spec find_location_header(list()) -> {ok, string()} | error.
+find_location_header([]) ->
+    error;
+find_location_header([{Header, Value} | Rest]) ->
+    HeaderLower = string:to_lower(Header),
+    case HeaderLower of
+        "location" ->
+            {ok, Value};
+        _ ->
+            find_location_header(Rest)
     end.
