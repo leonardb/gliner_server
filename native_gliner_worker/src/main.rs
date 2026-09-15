@@ -264,7 +264,7 @@ fn extract_and_remove_state_codes(text: &str) -> (Vec<Value>, String) {
             let state_code = caps.get(1).unwrap().as_str();
             json!({
                 "text": state_code,
-                "entity_type": "location_state",
+                "entity_type": "state",
                 "score": 0.98  // Regex matches on known list have very high confidence
             })
         })
@@ -619,10 +619,10 @@ mod tests {
 
         // Test 12: State code NOT within word
         let text12 = "The TEXASAZ border";
-        let matches12: Vec<&str> = state_regex.captures_iter(text12)
+        let matches12: Vec<_> = state_regex.captures_iter(text12)
             .map(|c| c.get(1).unwrap().as_str())
             .collect();
-        assert_eq!(matches12, vec![], "Test 12: State code not matched within word");
+        assert_eq!(matches12, vec![] as Vec<&str>, "Test 12: State code not matched within word");
     }
 
     #[test]
@@ -641,7 +641,7 @@ mod tests {
         assert_eq!(cleaned, ", , and are nice");
 
         // Test 3: State code with hyphen
-        let (entities, cleaned) = extract_and_remove_state_codes("NY-based company");
+        let (entities, _cleaned) = extract_and_remove_state_codes("NY-based company");
         assert_eq!(entities.len(), 1, "Should extract NY with hyphen");
         assert_eq!(entities[0]["text"], "NY");
         
