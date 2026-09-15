@@ -252,10 +252,10 @@ fn extract_and_remove_prefixes(text: &str) -> (Vec<Value>, String) {
 // Patterns: " AL " (surrounded by spaces), " AL." (followed by punctuation), etc.
 fn extract_and_remove_state_codes(text: &str) -> (Vec<Value>, String) {
     // Hardcoded regex pattern for all 50 US state abbreviations
-    // Pattern: (?:^|\s)(state1|state2|...|state50)(?=[\s.,!:?]|$)
-    // Matches state codes preceded by start/whitespace and followed by punctuation/space/end
+    // Pattern: \b(AL|AK|...|WY)\b
+    // Uses word boundaries to match complete state codes only (not substrings within words)
     let state_regex = Regex::new(
-        r"(?:^|\s)(AL|AK|AZ|AR|CA|CO|CT|DE|FL|GA|HI|ID|IL|IN|IA|KS|KY|LA|ME|MD|MA|MI|MN|MS|MO|MT|NE|NV|NH|NJ|NM|NY|NC|ND|OH|OK|OR|PA|RI|SC|SD|TN|TX|UT|VT|VA|WA|WV|WI|WY)(?=[\s.,!:?]|$)"
+        r"\b(AL|AK|AZ|AR|CA|CO|CT|DE|FL|GA|HI|ID|IL|IN|IA|KS|KY|LA|ME|MD|MA|MI|MN|MS|MO|MT|NE|NV|NH|NJ|NM|NY|NC|ND|OH|OK|OR|PA|RI|SC|SD|TN|TX|UT|VT|VA|WA|WV|WI|WY)\b"
     ).unwrap();
     
     // Extract all state codes
