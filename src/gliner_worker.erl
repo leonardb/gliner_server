@@ -43,7 +43,13 @@
 %%====================================================================
 
 clear_cache() ->
-    [gen_server:cast(P, clear_cache) || {_, P, _, _} <- supervisor:which_children(gliner_worker_sup)].
+    case whereis(gliner_pool) of
+        PoolPid when is_pid(PoolPid) ->
+            Workers = element(3, sys:get_state(PoolPid)),
+            [gen_server:cast(P, clear_cache) || P <- Workers];
+        _ ->
+            ok
+    end.
 
 -doc """
 Start a GLiNER worker process
