@@ -43,10 +43,9 @@
 %%====================================================================
 
 clear_cache() ->
-    case whereis(gliner_pool) of
-        PoolPid when is_pid(PoolPid) ->
-            Workers = element(3, sys:get_state(PoolPid)),
-            [gen_server:cast(P, clear_cache) || P <- Workers];
+    case gen_server:call(gliner_pool, get_all_workers) of
+        Workers when is_list(Workers) ->
+            [gen_server:cast(P, clear_cache) || {_, P, _, _} <- Workers];
         _ ->
             ok
     end.
