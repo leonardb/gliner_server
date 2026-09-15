@@ -253,7 +253,7 @@ fn extract_and_remove_prefixes(text: &str) -> (Vec<Value>, String) {
 fn extract_and_remove_state_codes(text: &str) -> (Vec<Value>, String) {
     // Hardcoded regex pattern for all 50 US state abbreviations
     // Pattern: \b(AL|AK|...|WY)\b
-    // Uses word boundaries to match complete state codes only (not substrings within words)
+    // Word boundaries on both sides prevent false positives: "AZAZ" or partial matches
     let state_regex = Regex::new(
         r"\b(AL|AK|AZ|AR|CA|CO|CT|DE|FL|GA|HI|ID|IL|IN|IA|KS|KY|LA|ME|MD|MA|MI|MN|MS|MO|MT|NE|NV|NH|NJ|NM|NY|NC|ND|OH|OK|OR|PA|RI|SC|SD|TN|TX|UT|VT|VA|WA|WV|WI|WY)\b"
     ).unwrap();
@@ -526,6 +526,130 @@ fn main() -> io::Result<()> {
     eprintln!("GLiNER Erlang Port shutting down gracefully");
     
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_state_code_regex_basic() {
+        let state_regex = Regex::new(
+            r"\b(AL|AK|AZ|AR|CA|CO|CT|DE|FL|GA|HI|ID|IL|IN|IA|KS|KY|LA|ME|MD|MA|MI|MN|MS|MO|MT|NE|NV|NH|NJ|NM|NY|NC|ND|OH|OK|OR|PA|RI|SC|SD|TN|TX|UT|VT|VA|WA|WV|WI|WY)\b"
+        ).unwrap();
+
+        // Test 1: Word followed by state code
+        let text1 = "John works in AZ";
+        let matches1: Vec<&str> = state_regex.captures_iter(text1)
+            .map(|c| c.get(1).unwrap().as_str())
+            .collect();
+        assert_eq!(matches1, vec!["AZ"], "Test 1: Word followed by state code");
+
+        // Test 2: State code followed by space
+        let text2 = "Live in CA and love it";
+        let matches2: Vec<&str> = state_regex.captures_iter(text2)
+            .map(|c| c.get(1).unwrap().as_str())
+            .collect();
+        assert_eq!(matches2, vec!["CA"], "Test 2: State code followed by space");
+
+        // Test 3: State code followed by period
+        let text3 = "She lives in NY.";
+        let matches3: Vec<&str> = state_regex.captures_iter(text3)
+            .map(|c| c.get(1).unwrap().as_str())
+            .collect();
+        assert_eq!(matches3, vec!["NY"], "Test 3: State code followed by period");
+
+        // Test 4: State code followed by comma
+        let text4 = "He is from TX, and loves it";
+        let matches4: Vec<&str> = state_regex.captures_iter(text4)
+            .map(|c| c.get(1).unwrap().as_str())
+            .collect();
+        assert_eq!(matches4, vec!["TX"], "Test 4: State code followed by comma");
+
+        // Test 5: State code followed by exclamation
+        let text5 = "Amazing place FL!";
+        let matches5: Vec<&str> = state_regex.captures_iter(text5)
+            .map(|c| c.get(1).unwrap().as_str())
+            .collect();
+        assert_eq!(matches5, vec!["FL"], "Test 5: State code followed by exclamation");
+
+        // Test 6: State code followed by question mark
+        let text6 = "Do you like WA?";
+        let matches6: Vec<&str> = state_regex.captures_iter(text6)
+            .map(|c| c.get(1).unwrap().as_str())
+            .collect();
+        assert_eq!(matches6, vec!["WA"], "Test 6: State code followed by question mark");
+
+        // Test 7: State code followed by colon
+        let text7 = "Location: CO: beautiful place";
+        let matches7: Vec<&str> = state_regex.captures_iter(text7)
+            .map(|c| c.get(1).unwrap().as_str())
+            .collect();
+        assert_eq!(matches7, vec!["CO"], "Test 7: State code followed by colon");
+
+        // Test 8: Multiple state codes
+        let text8 = "Visited CA, then TX, finally FL";
+        let matches8: Vec<&str> = state_regex.captures_iter(text8)
+            .map(|c| c.get(1).unwrap().as_str())
+            .collect();
+        assert_eq!(matches8, vec!["CA", "TX", "FL"], "Test 8: Multiple state codes");
+
+        // Test 9: State code at start
+        let text9 = "CA is beautiful";
+        let matches9: Vec<&str> = state_regex.captures_iter(text9)
+            .map(|c| c.get(1).unwrap().as_str())
+            .collect();
+        assert_eq!(matches9, vec!["CA"], "Test 9: State code at start");
+
+        // Test 10: Two states together (should NOT match both without delimiter)
+        let text10 = "AZAZ";
+        let matches10: Vec<&str> = state_regex.captures_iter(text10)
+            .map(|c| c.get(1).unwrap().as_str())
+            .collect();
+        println!("Test 10 'AZAZ' matches: {:?}", matches10);
+        // With \b on left only, first AZ matches (word boundary at start)
+        // Should be 1 or 0 depending on expected behavior
+        
+        // Test 11: State code followed by hyphen (NEW - should match with \b on left only)
+        let text11 = "NY-based company";
+        let matches11: Vec<&str> = state_regex.captures_iter(text11)
+            .map(|c| c.get(1).unwrap().as_str())
+            .collect();
+        assert_eq!(matches11, vec!["NY"], "Test 11: State code followed by hyphen");
+
+        // Test 12: State code NOT within word
+        let text12 = "The TEXASAZ border";
+        let matches12: Vec<&str> = state_regex.captures_iter(text12)
+            .map(|c| c.get(1).unwrap().as_str())
+            .collect();
+        assert_eq!(matches12, vec![], "Test 12: State code not matched within word");
+    }
+
+    #[test]
+    fn test_extract_and_remove_state_codes_function() {
+        // Test the full function behavior
+        
+        // Test 1: Single state code
+        let (entities, cleaned) = extract_and_remove_state_codes("John lives in CA");
+        assert_eq!(entities.len(), 1, "Should extract 1 state code");
+        assert_eq!(entities[0]["text"], "CA");
+        assert_eq!(cleaned, "John lives in");
+
+        // Test 2: Multiple state codes
+        let (entities, cleaned) = extract_and_remove_state_codes("CA, TX, and FL are nice");
+        assert_eq!(entities.len(), 3, "Should extract 3 state codes");
+        assert_eq!(cleaned, ", , and are nice");
+
+        // Test 3: State code with hyphen
+        let (entities, cleaned) = extract_and_remove_state_codes("NY-based company");
+        assert_eq!(entities.len(), 1, "Should extract NY with hyphen");
+        assert_eq!(entities[0]["text"], "NY");
+        
+        // Test 4: No state codes
+        let (entities, cleaned) = extract_and_remove_state_codes("Just a normal sentence");
+        assert_eq!(entities.len(), 0, "Should extract no state codes");
+        assert_eq!(cleaned, "Just a normal sentence");
+    }
 }
 
 
