@@ -251,23 +251,12 @@ fn extract_and_remove_prefixes(text: &str) -> (Vec<Value>, String) {
 // Matches valid US state abbreviations (AL, AK, AZ, ..., WY) with boundary conditions
 // Patterns: " AL " (surrounded by spaces), " AL." (followed by punctuation), etc.
 fn extract_and_remove_state_codes(text: &str) -> (Vec<Value>, String) {
-    // All valid US state abbreviations
-    let states = [
-        "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA",
-        "HI", "ID", "IL", "IN", "IA", "KS", "KY", "LA", "ME", "MD",
-        "MA", "MI", "MN", "MS", "MO", "MT", "NE", "NV", "NH", "NJ",
-        "NM", "NY", "NC", "ND", "OH", "OK", "OR", "PA", "RI", "SC",
-        "SD", "TN", "TX", "UT", "VT", "VA", "WA", "WV", "WI", "WY",
-    ];
-    
-    // Build regex: match state codes with word boundaries or punctuation
-    // Pattern: (?:^|\s)(AL|AK|...|WY)(?=[\s.,!:?]|$)
-    // This matches state codes that are either:
-    // - Preceded by start of string or whitespace
-    // - Followed by space, period, comma, exclamation, colon, question, or end of string
-    let states_pattern = states.join("|");
-    let pattern = format!(r"(?:^|\s)({})(?=[\s.,!:?]|$)", states_pattern);
-    let state_regex = Regex::new(&pattern).unwrap();
+    // Hardcoded regex pattern for all 50 US state abbreviations
+    // Pattern: (?:^|\s)(state1|state2|...|state50)(?=[\s.,!:?]|$)
+    // Matches state codes preceded by start/whitespace and followed by punctuation/space/end
+    let state_regex = Regex::new(
+        r"(?:^|\s)(AL|AK|AZ|AR|CA|CO|CT|DE|FL|GA|HI|ID|IL|IN|IA|KS|KY|LA|ME|MD|MA|MI|MN|MS|MO|MT|NE|NV|NH|NJ|NM|NY|NC|ND|OH|OK|OR|PA|RI|SC|SD|TN|TX|UT|VT|VA|WA|WV|WI|WY)(?=[\s.,!:?]|$)"
+    ).unwrap();
     
     // Extract all state codes
     let state_entities: Vec<Value> = state_regex.captures_iter(text)
