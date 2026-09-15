@@ -43,7 +43,7 @@ generate_pattern(Text, Entities) ->
         EscapedText = escape_regex_special_chars(TextWithPlaceholders),
         
         % Step 3: Replace each placeholder with the non-greedy capture group (.*?)
-        PatternStr = lists:foldl(fun({EntityText, Index}, Acc) ->
+        PatternStr = lists:foldl(fun({_EntityText, Index}, Acc) ->
             Placeholder = <<"<<<ENTITY_", (integer_to_binary(Index))/binary, ">>>">>,
             binary:replace(Acc, Placeholder, <<"(.*?)">>, [global])
         end, EscapedText, lists:zip(SortedByLength, lists:seq(0, length(SortedByLength) - 1))),

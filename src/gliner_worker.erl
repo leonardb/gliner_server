@@ -442,7 +442,7 @@ extract_matches_and_build_template(Text, CompiledPattern, _PatternString) ->
             
             % Build template by replacing captures with token placeholders
             TemplateWithTokens = lists:foldl(fun({TokenName, MatchValue}, Acc) ->
-                binary:replace(Acc, MatchValue, <<"{{", TokenName/binary, "}}">>, [global])
+                do_replace(Acc, <<"{{", TokenName/binary, "}}">>, MatchValue)
             end, Text, TokensAndMatches),
             
             % Extract just the token names and values
@@ -470,3 +470,30 @@ build_tokens_with_index([Value | Rest], Index, Acc) when is_map_key(Value, ?EXCL
 build_tokens_with_index([Value | Rest], Index, Acc) ->
     TokenName = <<"smdpattern_", (integer_to_binary(Index))/binary>>,
     build_tokens_with_index(Rest, Index + 1, [{TokenName, Value} | Acc]).
+
+do_replace(Tpl, Token, Value) when is_binary(Tpl) ->
+    do_replace(Tpl, Token, Value, all).
+
+do_replace(Tpl, Token, Value, Limit) when is_binary(Tpl) ->
+    do_replace(re:split(Tpl, <<"({{[^}]+}})">>), Token, Value, Limit, <<>>).
+
+do_replace([], _Token, _Value, _Limit, Acc) ->
+    Acc;
+do_replace([<<"{{", _/binary>> = Part | Rest], Token, Value, Limit, Acc) ->
+    do_replace(Rest, Token, Value, Limit, <<Acc/binary, Part/binary>>);
+do_replace([Part | Rest], Token, <<>> = Value, Limit, Acc) ->
+    do_replace(Rest, Token, Value, Limit, <<Acc/binary, Part/binary>>);
+do_replace([Part0 | Rest], Token, Value, stop, Acc) ->
+    do_replace(Rest, Token, Value, stop, <<Acc/binary, Part0/binary>>);
+do_replace([Part0 | Rest], Token, Value, all, Acc) ->
+    Part = binary:replace(Part0, Value, Token, [global]),
+    do_replace(Rest, Token, Value, all, <<Acc/binary, Part/binary>>);
+do_replace([Part0 | Rest], Token, Value, first, Acc) ->
+    case binary:match(Part0, Value) of
+        nomatch ->
+            do_replace(Rest, Token, Value, first, <<Acc/binary, Part0/binary>>);
+        _ ->
+            %% replace multiple instances of a pattern
+            Part = binary:replace(Part0, Value, Token, [global]),
+            do_replace(Rest, Token, Value, stop, <<Acc/binary, Part/binary>>)
+    end.
