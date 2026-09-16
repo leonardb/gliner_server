@@ -104,7 +104,7 @@ handle_cast({put_pattern, PatternEntry}, State) ->
 
 handle_cast(clear_cache, State) ->
     persistent_term:put(?CACHE_TERM_KEY, []),
-    {reply, ok, State#state{cache_list = [], current_size = 0}};
+    {noreply, State#state{cache_list = [], current_size = 0}};
 
 handle_cast(_Msg, State) ->
     {noreply, State}.
