@@ -32,10 +32,7 @@
     buffer = <<>> :: binary(),
     ready = false :: boolean(),
     reconnect_attempt = 0 :: non_neg_integer(),
-    reconnect_timer = undefined :: reference() | undefined,
-    pattern_cache = [] :: list(),  % In-memory list of {CompiledPattern, EntityMap}
-    cache_size = 0 :: non_neg_integer(),  % Current cache size (O(1) lookup vs length/1)
-    max_cache_size = 1000 :: pos_integer()
+    reconnect_timer = undefined :: reference() | undefined
 }).
 
 %%====================================================================
@@ -43,12 +40,7 @@
 %%====================================================================
 
 clear_cache() ->
-    case gen_server:call(gliner_pool, get_all_workers) of
-        Workers when is_list(Workers) ->
-            [gen_server:cast(P, clear_cache) || {_, P, _, _} <- Workers];
-        _ ->
-            ok
-    end.
+    gliner_pattern_cache:clear_cache().
 
 -doc """
 Start a GLiNER worker process
@@ -119,7 +111,7 @@ handle_call({analyze, Text}, _From, State = #state{port = Port, buffer = Buffer}
 %% Analyze with explicit return type
 handle_call({analyze, _Text, _ReturnType}, _From, State = #state{ready = false}) ->
     {reply, {error, not_ready}, State};
-handle_call({analyze, Text, ReturnType}, _From, State = #state{port = Port, buffer = Buffer, pattern_cache = Cache}) ->
+handle_call({analyze, Text, ReturnType}, _From, State = #state{port = Port, buffer = Buffer}) ->
     % Check if port is alive
     case Port of
         undefined ->
@@ -131,28 +123,60 @@ handle_call({analyze, Text, ReturnType}, _From, State = #state{port = Port, buff
                     {Response, NewBuffer} = call_gliner(Text, Port, Buffer),
                     {reply, {ok, Response}, State#state{buffer = NewBuffer}};
                 pattern ->
-                    % Try pattern cache first
-                    case try_match_cache(Text, Cache) of
-                        {ok, MatchedPattern} ->
-                            % Return matched pattern
-                            Response = #{<<"pattern">> => MatchedPattern, <<"cached">> => true},
+                    % Try to match against global pattern cache (fold through list)
+                    CacheList = gliner_pattern_cache:get_cache_list(),
+                    case try_match_pattern_list(Text, CacheList) of
+                        {ok, PatternString} ->
+                            % Return matched pattern from cache
+                            Response = #{<<"pattern">> => PatternString, <<"cached">> => true},
                             {reply, {ok, Response}, State};
                         no_match ->
-                            % Call GLiNER and potentially cache the pattern
-                            {Response, NewBuffer, NewCache, NewCacheSize} = call_gliner_and_cache(Text, Port, Buffer, Cache, State#state.cache_size, State#state.max_cache_size),
-                            {reply, {ok, Response}, State#state{buffer = NewBuffer, pattern_cache = NewCache, cache_size = NewCacheSize}}
+                            % Call GLiNER and add pattern to cache
+                            {Response, NewBuffer} = call_gliner(Text, Port, Buffer),
+                            % Try to generate and cache pattern
+                            case maps:get(<<"entities">>, Response, []) of
+                                [] ->
+                                    {reply, {ok, Response}, State#state{buffer = NewBuffer}};
+                                Entities ->
+                                    case gliner_cache:generate_pattern(Text, Entities) of
+                                        {ok, {_CompiledPattern, PatternString} = PatternEntry} ->
+                                            gliner_pattern_cache:put_pattern(PatternEntry),
+                                            PatternResponse = #{<<"pattern">> => PatternString, <<"cached">> => false},
+                                            {reply, {ok, PatternResponse}, State#state{buffer = NewBuffer}};
+                                        {error, _Reason} ->
+                                            {reply, {ok, Response}, State#state{buffer = NewBuffer}}
+                                    end
+                            end
                     end;
                 tokens ->
-                    % Try pattern cache first, then extract matches if found
-                    case try_match_cache_with_matches(Text, Cache) of
-                        {ok, TemplateAndMatches} ->
-                            % Return template with matches (cached)
-                            Response = maps:merge(TemplateAndMatches, #{<<"cached">> => true}),
+                    % Try to match against global pattern cache, then extract matches if found
+                    CacheList = gliner_pattern_cache:get_cache_list(),
+                    case try_match_pattern_list_with_matches(Text, CacheList) of
+                        {ok, TemplateMap} ->
+                            % Pattern found in cache, template and tokens extracted
+                            Response = maps:merge(TemplateMap, #{<<"cached">> => true}),
                             {reply, {ok, Response}, State};
                         no_match ->
-                            % Call GLiNER and extract matches from generated pattern
-                            {Response, NewBuffer, NewCache, NewCacheSize} = call_gliner_and_cache_matches(Text, Port, Buffer, Cache, State#state.cache_size, State#state.max_cache_size),
-                            {reply, {ok, Response}, State#state{buffer = NewBuffer, pattern_cache = NewCache, cache_size = NewCacheSize}}
+                            % No pattern found in cache - call GLiNER and generate pattern
+                            {Response, NewBuffer} = call_gliner(Text, Port, Buffer),
+                            case maps:get(<<"entities">>, Response, []) of
+                                [] ->
+                                    {reply, {ok, Response}, State#state{buffer = NewBuffer}};
+                                Entities ->
+                                    case gliner_cache:generate_pattern(Text, Entities) of
+                                        {ok, {CompiledPattern, PatternString} = PatternEntry} ->
+                                            gliner_pattern_cache:put_pattern(PatternEntry),
+                                            case extract_matches_and_build_template(Text, CompiledPattern, PatternString) of
+                                                {ok, TemplateMap} ->
+                                                    TokenResponse = maps:merge(TemplateMap, #{<<"cached">> => false}),
+                                                    {reply, {ok, TokenResponse}, State#state{buffer = NewBuffer}};
+                                                {error, _} ->
+                                                    {reply, {ok, Response}, State#state{buffer = NewBuffer}}
+                                            end;
+                                        {error, _Reason} ->
+                                            {reply, {ok, Response}, State#state{buffer = NewBuffer}}
+                                    end
+                            end
                     end
             end
     end;
@@ -170,9 +194,6 @@ handle_call({wait_ready}, _From, State = #state{ready = Ready}) ->
 handle_call(_Request, _From, State) ->
     {reply, {error, unknown_request}, State}.
 
-handle_cast(clear_cache, State = #state{}) ->
-    ?LOG_INFO("Worker ~w: Clearing pattern cache", [State#state.worker_id]),
-    {noreply, State#state{pattern_cache = []}};
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
@@ -350,99 +371,6 @@ call_gliner(Text, Port, Buffer) ->
     {Response, NewBuffer} = read_response(Port, Buffer),
     {Response, NewBuffer}.
 
-%% Try to match text against cached patterns
-%% Returns {ok, PatternString} or no_match
--spec try_match_cache(binary(), list()) -> {ok, binary()} | no_match.
-try_match_cache(_Text, []) ->
-    no_match;
-try_match_cache(Text, [PatternEntry | Rest]) ->
-    case gliner_cache:try_match_pattern(Text, PatternEntry) of
-        {ok, PatternString} ->
-            {ok, PatternString};
-        no_match ->
-            try_match_cache(Text, Rest)
-    end.
-
-%% Call GLiNER and generate/cache pattern if response contains entities
--spec call_gliner_and_cache(binary(), port(), binary(), list(), non_neg_integer(), pos_integer()) -> {map(), binary(), list(), non_neg_integer()}.
-call_gliner_and_cache(Text, Port, Buffer, Cache, CacheSize, MaxCacheSize) ->
-    {Response, NewBuffer} = call_gliner(Text, Port, Buffer),
-    
-    % Try to generate and cache pattern
-    case maps:get(<<"entities">>, Response, []) of
-        [] ->
-            % No entities, no pattern to cache - return original response
-            {Response, NewBuffer, Cache, CacheSize};
-        Entities ->
-            case gliner_cache:generate_pattern(Text, Entities) of
-                {ok, {_CompiledPattern, PatternString}} ->
-                    % Add to cache (returns both cache and new size)
-                    PatternEntry = {_CompiledPattern, PatternString},
-                    {NewCache, NewSize} = gliner_cache:add_to_cache(PatternEntry, Cache, CacheSize, MaxCacheSize),
-                    % Return pattern response (not the original entity response)
-                    PatternResponse = #{<<"pattern">> => PatternString, <<"cached">> => false},
-                    {PatternResponse, NewBuffer, NewCache, NewSize};
-                {error, Reason} ->
-                    ?LOG_DEBUG("Failed to generate pattern: ~w", [Reason]),
-                    % On error, return original response
-                    {Response, NewBuffer, Cache, CacheSize}
-            end
-    end.
-
-%% Try to match text against cached patterns and extract matches
-%% Returns {ok, {template, tokens, matches}} if match found, or no_match
--spec try_match_cache_with_matches(binary(), list()) -> {ok, map()} | no_match.
-try_match_cache_with_matches(_Text, []) ->
-    no_match;
-try_match_cache_with_matches(Text, [{CompiledPattern, PatternString} | Rest]) ->
-    case gliner_cache:try_match_pattern(Text, {CompiledPattern, PatternString}) of
-        {ok, _} ->
-            % Pattern matched, now extract matches
-            case extract_matches_and_build_template(Text, CompiledPattern, PatternString) of
-                {ok, TemplateMap} ->
-                    {ok, TemplateMap};
-                {error, _} ->
-                    % Extraction failed, try next pattern
-                    try_match_cache_with_matches(Text, Rest)
-            end;
-        no_match ->
-            try_match_cache_with_matches(Text, Rest)
-    end.
-
-%% Call GLiNER, generate pattern, and extract matches
--spec call_gliner_and_cache_matches(binary(), port(), binary(), list(), non_neg_integer(), pos_integer()) -> {map(), binary(), list(), non_neg_integer()}.
-call_gliner_and_cache_matches(Text, Port, Buffer, Cache, CacheSize, MaxCacheSize) ->
-    {Response, NewBuffer} = call_gliner(Text, Port, Buffer),
-    
-    % Try to generate and cache pattern
-    case maps:get(<<"entities">>, Response, []) of
-        [] ->
-            % No entities, no pattern to cache - return original response
-            {Response, NewBuffer, Cache, CacheSize};
-        Entities ->
-            case gliner_cache:generate_pattern(Text, Entities) of
-                {ok, {CompiledPattern, PatternString}} ->
-                    % Extract matches from the generated pattern
-                    case extract_matches_and_build_template(Text, CompiledPattern, PatternString) of
-                        {ok, TemplateMap} ->
-                            % Add to cache
-                            PatternEntry = {CompiledPattern, PatternString},
-                            {NewCache, NewSize} = gliner_cache:add_to_cache(PatternEntry, Cache, CacheSize, MaxCacheSize),
-                            % Return template with matches (not cached, just generated)
-                            TemplateMapWithCached = maps:merge(TemplateMap, #{<<"cached">> => false}),
-                            {TemplateMapWithCached, NewBuffer, NewCache, NewSize};
-                        {error, _ExtractReason} ->
-                            ?LOG_DEBUG("Failed to extract matches from pattern", []),
-                            % On extraction error, return original response
-                            {Response, NewBuffer, Cache, CacheSize}
-                    end;
-                {error, Reason} ->
-                    ?LOG_DEBUG("Failed to generate pattern: ~w", [Reason]),
-                    % On error, return original response
-                    {Response, NewBuffer, Cache, CacheSize}
-            end
-    end.
-
 %% Extract matches from compiled pattern and build response template with tokens
 %% Returns {ok, #{template => NewTemplate, tokens => TokensList}} or {error, term()}
 -spec extract_matches_and_build_template(binary(), re:mp(), binary()) -> {ok, map()} | {error, term()}.
@@ -514,4 +442,39 @@ do_replace([Part0 | Rest], Token, Value, first, Acc) ->
             %% replace multiple instances of a pattern
             Part = binary:replace(Part0, Value, Token, [global]),
             do_replace(Rest, Token, Value, stop, <<Acc/binary, Part/binary>>)
+    end.
+
+%% Try to match text against a list of cached patterns
+%% Folds through the list and returns the pattern string on first match
+-spec try_match_pattern_list(binary(), list()) -> {ok, binary()} | no_match.
+try_match_pattern_list(_Text, []) ->
+    no_match;
+try_match_pattern_list(Text, [{_CompiledPattern, PatternString} = PatternEntry | Rest]) ->
+    % PatternEntry is {CompiledPattern, PatternString}
+    case gliner_cache:try_match_pattern(Text, PatternEntry) of
+        {ok, _} ->
+            {ok, PatternString};
+        no_match ->
+            try_match_pattern_list(Text, Rest)
+    end.
+
+%% Try to match text and extract template with tokens
+%% Folds through cached patterns and extracts matches from first match
+-spec try_match_pattern_list_with_matches(binary(), list()) -> {ok, map()} | no_match.
+try_match_pattern_list_with_matches(_Text, []) ->
+    no_match;
+try_match_pattern_list_with_matches(Text, [{CompiledPattern, PatternString} = PatternEntry | Rest]) ->
+    % PatternEntry is {CompiledPattern, PatternString}
+    case gliner_cache:try_match_pattern(Text, PatternEntry) of
+        {ok, _} ->
+            % Pattern matched, extract matches and build template
+            case extract_matches_and_build_template(Text, CompiledPattern, PatternString) of
+                {ok, TemplateMap} ->
+                    {ok, TemplateMap};
+                {error, _} ->
+                    % Extraction failed, try next pattern
+                    try_match_pattern_list_with_matches(Text, Rest)
+            end;
+        no_match ->
+            try_match_pattern_list_with_matches(Text, Rest)
     end.
