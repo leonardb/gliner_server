@@ -17,7 +17,9 @@
 %% URLs for model and tokenizer from HuggingFace
 -define(TOKENIZER_URL, "https://huggingface.co/onnx-community/gliner_multi_pii-v1/resolve/main/tokenizer.json").
 -define(MODEL_URL, "https://huggingface.co/onnx-community/gliner_multi_pii-v1/resolve/main/onnx/model.onnx").
-
+% -define(TOKENIZER_URL, "https://huggingface.co/onnx-community/gliner_multi-v2.1/resolve/main/tokenizer.json").
+% -define(MODEL_URL, "https://huggingface.co/onnx-community/gliner_multi-v2.1/resolve/main/onnx/model.onnx").
+%% https://huggingface.co/DanKau/gliner2-pii-onnx
 %%====================================================================
 %% API
 %%====================================================================
