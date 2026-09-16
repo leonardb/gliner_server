@@ -56,14 +56,14 @@ Updates persistent_term with the new cache list
 """.
 -spec put_pattern({re:mp(), binary()}) -> ok.
 put_pattern({_, _} = PatternEntry) ->
-    gen_server:call(?MODULE, {put_pattern, PatternEntry}).
+    gen_server:cast(?MODULE, {put_pattern, PatternEntry}).
 
 -doc """
 Clear all cached patterns
 """.
 -spec clear_cache() -> ok.
 clear_cache() ->
-    gen_server:call(?MODULE, clear_cache).
+    gen_server:cast(?MODULE, clear_cache).
 
 -doc """
 Get cache statistics
@@ -89,13 +89,6 @@ init([MaxSize]) ->
     end,
     {ok, #state{max_size = MaxSize, cache_list = CacheList, current_size = length(CacheList)}}.
 
-handle_call({put_pattern, PatternEntry}, _From, State) ->
-    {reply, ok, add_to_cache(PatternEntry, State)};
-
-handle_call(clear_cache, _From, State) ->
-    persistent_term:put(?CACHE_TERM_KEY, []),
-    {reply, ok, State#state{cache_list = [], current_size = 0}};
-
 handle_call(cache_stats, _From, State) ->
     Stats = #{
         size => State#state.current_size,
@@ -105,6 +98,13 @@ handle_call(cache_stats, _From, State) ->
 
 handle_call(_Request, _From, State) ->
     {reply, {error, unknown_request}, State}.
+
+handle_cast({put_pattern, PatternEntry}, State) ->
+    {noreply, add_to_cache(PatternEntry, State)};
+
+handle_cast(clear_cache, State) ->
+    persistent_term:put(?CACHE_TERM_KEY, []),
+    {reply, ok, State#state{cache_list = [], current_size = 0}};
 
 handle_cast(_Msg, State) ->
     {noreply, State}.
