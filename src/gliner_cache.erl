@@ -26,7 +26,7 @@
 generate_pattern(Text, Entities) ->
     try
         % Extract unique entity texts
-        UniqueTexts = lists:usort([maps:get(<<"text">>, E) || E <- Entities]),
+        UniqueTexts = lists:usort(lists:filter(fun(T) -> byte_size(T) > 1 end, [maps:get(<<"text">>, E) || E <- Entities])),
         
         % Sort by length (longest first) to prevent partial replacements
         % Example: if we have ["New York", "New York City"], replace "New York City" first
