@@ -424,8 +424,11 @@ fn main() -> io::Result<()> {
         // Remove {{...}} segments from text
         let clean_text = remove_exclusions(&text);
         
+        // Extract first prefix (alphanumeric prefix followed by colon at start) and remove it from text
+        let (prefix_entities, text_without_prefixes) = extract_and_remove_prefixes(&clean_text);
+        
         // Extract emails and remove them from text
-        let (email_entities, text_without_emails) = extract_and_remove_emails(&clean_text);
+        let (email_entities, text_without_emails) = extract_and_remove_emails(&text_without_prefixes);
         
         // Extract US state codes and remove them from text
         let (state_entities, text_without_states) = extract_and_remove_state_codes(&text_without_emails);
@@ -490,10 +493,6 @@ fn main() -> io::Result<()> {
                 })
             })
             .collect();
-        
-        // Extract prefix entities after GLiNER inference
-        // This allows GLiNER to see the prefix context without the prefix interfering with entity detection
-        let (prefix_entities, _) = extract_and_remove_prefixes(&text_without_financial);
         
         // Add extracted prefix entities to the results
         entities.extend(prefix_entities);
