@@ -222,11 +222,11 @@ fn extract_and_remove_rates(text: &str) -> (Vec<Value>, String) {
 // Helper: Extract first prefix (alphanumeric prefix followed by colon at start) and remove it from text
 fn extract_and_remove_prefixes(text: &str) -> (Vec<Value>, String) {
     // Prefix pattern: Only match at the very start of text
-    // Alphanumeric characters (letters and numbers only) followed by a colon
-    // Example: "ID123: description" -> extract "ID123" only
-    let prefix_regex = Regex::new(r"^([a-zA-Z0-9]+):").unwrap();
+    // Alphanumeric characters (letters and numbers only) followed by a colon, both included in capture
+    // Example: "ID123: description" -> extract "ID123:" 
+    let prefix_regex = Regex::new(r"^([a-zA-Z0-9]+:)").unwrap();
     
-    // Extract only the first prefix
+    // Extract only the first prefix (including colon)
     let prefixes: Vec<Value> = if let Some(caps) = prefix_regex.captures(text) {
         if let Some(prefix_match) = caps.get(1) {
             let prefix = prefix_match.as_str();
