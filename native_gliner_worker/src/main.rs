@@ -218,6 +218,31 @@ fn extract_and_remove_rates(text: &str) -> (Vec<Value>, String) {
     (rates, cleaned_text)
 }
 
+// Helper: Extract names that directly follow prefix colons
+// Handles edge case where names directly abut prefix colons (e.g., "ABC:Edward")
+// Extracts WORD from "PREFIX:WORD" patterns at start of text, without modifying text
+fn extract_colon_adjacent_names(text: &str) -> Vec<Value> {
+    // Pattern: Alphanumeric prefix followed by colon (NO SPACE), then capitalized word(s)
+    // This captures "ABC:Edward" but NOT "ABC: Edward"
+    // Matches: ^[a-zA-Z0-9]+:([a-zA-Z]*) - prefix, colon, then alphabetic characters only
+    let colon_name_regex = Regex::new(r"^[a-zA-Z0-9]+:([a-zA-Z]*)").unwrap();
+    
+    if let Some(caps) = colon_name_regex.captures(text) {
+        if let Some(name_match) = caps.get(1) {
+            let name = name_match.as_str();
+            if !name.is_empty() {
+                return vec![json!({
+                    "text": name,
+                    "entity_type": "person",
+                    "score": 0.88  // High confidence for names after colons
+                })];
+            }
+        }
+    }
+    
+    vec![]
+}
+
 // Helper: Extract first prefix (alphanumeric prefix followed by colon at start) and remove it from text
 fn extract_and_remove_prefixes(text: &str) -> (Vec<Value>, String) {
     // Prefix pattern: Only match at the very start of text
@@ -423,11 +448,12 @@ fn main() -> io::Result<()> {
         // Remove {{...}} segments from text
         let clean_text = remove_exclusions(&text);
         
-        // Extract prefixes and remove them from text
-        let (prefix_entities, text_without_prefixes) = extract_and_remove_prefixes(&clean_text);
+        // Extract names that directly follow prefix colons (e.g., "ABC:Edward")
+        // Do this early before prefix removal to capture names that would otherwise be lost
+        let colon_adjacent_names = extract_colon_adjacent_names(&clean_text);
         
         // Extract emails and remove them from text
-        let (email_entities, text_without_emails) = extract_and_remove_emails(&text_without_prefixes);
+        let (email_entities, text_without_emails) = extract_and_remove_emails(&clean_text);
         
         // Extract US state codes and remove them from text
         let (state_entities, text_without_states) = extract_and_remove_state_codes(&text_without_emails);
@@ -444,7 +470,8 @@ fn main() -> io::Result<()> {
         // Extract dollar amounts and remove them from text
         let (dollar_entities, text_without_financial) = extract_and_remove_dollar_amounts(&text_without_rates);
         
-        // Perform inference on text with all special entities removed
+        // Run GLiNER inference on text with financial/temporal entities removed, but BEFORE removing prefixes
+        // This allows GLiNER to see "ABC:Edward" pattern and properly extract names adjacent to colons
         let input = match TextInput::from_str(&[text_without_financial.as_str()], &labels) {
             Ok(inp) => inp,
             Err(e) => {
@@ -493,8 +520,15 @@ fn main() -> io::Result<()> {
             })
             .collect();
         
+        // Extract prefix entities after GLiNER inference
+        // This allows GLiNER to see the prefix context without the prefix interfering with entity detection
+        let (prefix_entities, _) = extract_and_remove_prefixes(&text_without_financial);
+        
         // Add extracted prefix entities to the results
         entities.extend(prefix_entities);
+        
+        // Add colon-adjacent names (extracted early to preserve names after colons)
+        entities.extend(colon_adjacent_names);
         
         // Add extracted email entities to the results
         entities.extend(email_entities);
@@ -662,6 +696,54 @@ mod tests {
         let (entities, cleaned) = extract_and_remove_state_codes("Just a normal sentence");
         assert_eq!(entities.len(), 0, "Should extract no state codes");
         assert_eq!(cleaned, "Just a normal sentence");
+    }
+
+    #[test]
+    fn test_extract_colon_adjacent_names() {
+        // Test the colon-adjacent name extraction edge case
+        // Regex: ^[a-zA-Z0-9]+:([a-zA-Z]*)
+        // Extracts alphabetic characters immediately after colon at text start
+        // Only matches PREFIX:NAME with NO space after the colon
+        
+        // Test 1: Prefix:Name pattern (the problematic edge case)
+        let text1 = "ABC:Edward, see homeowner programs available";
+        let names1 = extract_colon_adjacent_names(text1);
+        assert_eq!(names1.len(), 1, "Should extract 1 name from prefix:name");
+        assert_eq!(names1[0]["text"], "Edward", "Should extract name after colon");
+        assert_eq!(names1[0]["entity_type"], "person");
+
+        // Test 2: Space after colon - should NOT extract (pattern requires no space)
+        let text2 = "ABC: Edward, see homeowner programs";
+        let names2 = extract_colon_adjacent_names(text2);
+        assert_eq!(names2.len(), 0, "Should NOT extract when space follows colon");
+
+        // Test 3: Lowercase name - should extract (pattern accepts any alphabetic)
+        let text3 = "ABC:edward is here";
+        let names3 = extract_colon_adjacent_names(text3);
+        assert_eq!(names3.len(), 1, "Should extract lowercase names");
+        assert_eq!(names3[0]["text"], "edward", "Should capture lowercase alphabetic");
+
+        // Test 4: Name stops at non-alphabetic character
+        let text4 = "REQ001:Sarah123 contacted";
+        let names4 = extract_colon_adjacent_names(text4);
+        assert_eq!(names4.len(), 1, "Should extract name before numeric");
+        assert_eq!(names4[0]["text"], "Sarah", "Should stop at non-alphabetic");
+
+        // Test 5: Not at start - should NOT extract (pattern only at start with ^)
+        let text5 = "In the middle ABC:John said hello";
+        let names5 = extract_colon_adjacent_names(text5);
+        assert_eq!(names5.len(), 0, "Should only process at text start");
+
+        // Test 6: Single letter name - should extract (pattern allows any length)
+        let text6 = "ABC:J was here";
+        let names6 = extract_colon_adjacent_names(text6);
+        assert_eq!(names6.len(), 1, "Should extract single letter");
+        assert_eq!(names6[0]["text"], "J", "Should capture single letter name");
+
+        // Test 7: No alphabetic after colon - should NOT extract
+        let text7 = "ABC:123 numeric code";
+        let names7 = extract_colon_adjacent_names(text7);
+        assert_eq!(names7.len(), 0, "Should not extract when no alphabetic follows colon");
     }
 }
 
